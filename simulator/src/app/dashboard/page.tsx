@@ -1,39 +1,98 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import {
-  ChevronRight, Database, Trophy, Timer, Gauge, TrendingUp,
-  BarChart3, Activity, Map, Users, Download, Trash2,
+  ChevronRight, Database, Trophy, Timer,
+  BarChart3, Activity, Download, Trash2, Cloud, Bot, RefreshCcw, Play,
+  ChevronDown, HelpCircle, Zap, X,
 } from 'lucide-react';
-import { getRuns, getStats, exportRunsAsJSON, exportRunsAsCSV, type TrainingRun, type AccumulatedStats } from '@/lib/data/training-data';
+import { getRuns, getStats, exportRunsAsJSON, exportRunsAsCSV, deleteRuns, type TrainingRun, type AccumulatedStats } from '@/lib/data/training-data';
+import { downloadBlob, exportAllRunCapturesZip, exportRunCaptureZip } from '@/lib/capture/frame-store';
+import {
+  createTrainingJob,
+  fetchActiveModelVersion,
+  isApiConfigured,
+  listModels as fetchRemoteModels,
+  listTrainingJobs as fetchRemoteTrainingJobs,
+  setActiveModelVersion as setRemoteActiveModelVersion,
+  type ModelRecordPayload,
+  type TrainingJobRecordPayload,
+} from '@/lib/api/api-client';
 import { LapTimeChart } from '@/components/dashboard/LapTimeChart';
 import { SpeedDistribution } from '@/components/dashboard/SpeedDistribution';
-import { SteeringHeatmap } from '@/components/dashboard/SteeringHeatmap';
 import { TrackCoverage } from '@/components/dashboard/TrackCoverage';
 import { RunsTable } from '@/components/dashboard/RunsTable';
 import { FrameTimeline } from '@/components/dashboard/FrameTimeline';
 
-type Tab = 'overview' | 'laps' | 'driving' | 'coverage' | 'runs' | 'timeline';
+type Tab = 'driving' | 'data' | 'models' | 'inspector';
 
-const tabs: { id: Tab; label: string; icon: typeof BarChart3 }[] = [
-  { id: 'overview', label: 'Overview', icon: BarChart3 },
-  { id: 'laps', label: 'Lap Times', icon: Timer },
-  { id: 'driving', label: 'Driving Analysis', icon: Activity },
-  { id: 'coverage', label: 'Track Coverage', icon: Map },
-  { id: 'runs', label: 'All Runs', icon: Database },
-  { id: 'timeline', label: 'Frame Data', icon: TrendingUp },
+const tabs: { id: Tab; label: string; icon: typeof BarChart3; description: string }[] = [
+  { id: 'driving', label: 'My Driving', icon: Activity, description: 'Your stats and progress' },
+  { id: 'data', label: 'Training Data', icon: Database, description: 'Runs the AI learns from' },
+  { id: 'models', label: 'AI Models', icon: Bot, description: 'Training pipeline and results' },
+  { id: 'inspector', label: 'Inspector', icon: Zap, description: 'Advanced frame-level data' },
 ];
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [activeTab, setActiveTab] = useState<Tab>('driving');
   const [runs, setRuns] = useState<TrainingRun[]>([]);
   const [stats, setStats] = useState<AccumulatedStats | null>(null);
   const [selectedRun, setSelectedRun] = useState<TrainingRun | null>(null);
+  const [exportingCaptureZip, setExportingCaptureZip] = useState(false);
+  const [remoteModels, setRemoteModels] = useState<ModelRecordPayload[]>([]);
+  const [remoteJobs, setRemoteJobs] = useState<TrainingJobRecordPayload[]>([]);
+  const [activeRemoteModel, setActiveRemoteModel] = useState<string | null>(null);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [creatingJob, setCreatingJob] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showHelp, setShowHelp] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('dashboard-help-dismissed') !== 'true';
+  });
+  const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setRuns(getRuns());
     setStats(getStats());
+  }, []);
+
+  // Close export dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  async function refreshCloudData() {
+    if (!isApiConfigured()) return;
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      const [models, jobs, active] = await Promise.all([
+        fetchRemoteModels(20),
+        fetchRemoteTrainingJobs(20),
+        fetchActiveModelVersion(),
+      ]);
+      setRemoteModels(models);
+      setRemoteJobs(jobs);
+      setActiveRemoteModel(active);
+    } catch (error) {
+      console.error(error);
+      setRemoteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isApiConfigured()) return;
+    void refreshCloudData();
   }, []);
 
   function handleExport(format: 'json' | 'csv') {
@@ -45,6 +104,46 @@ export default function DashboardPage() {
     a.download = `deepracer-training-data.${format}`;
     a.click();
     URL.revokeObjectURL(url);
+    setShowExportMenu(false);
+  }
+
+  function handleDeleteRuns(ids: string[]) {
+    deleteRuns(ids);
+    setRuns(getRuns());
+    setStats(getStats());
+    if (selectedRun && ids.includes(selectedRun.id)) {
+      setSelectedRun(null);
+    }
+  }
+
+  async function handleDownloadRunCapture(run: TrainingRun) {
+    if (!run.hasFrameCapture) return;
+    try {
+      const zip = await exportRunCaptureZip(run.id);
+      downloadBlob(zip, `deepracer-run-${run.id}.zip`);
+    } catch (error) {
+      console.error(error);
+      alert('Unable to export image capture for this run.');
+    }
+  }
+
+  async function handleExportAllCaptureZips() {
+    const captureRunIds = runs.filter((r) => r.hasFrameCapture).map((r) => r.id);
+    if (captureRunIds.length === 0) {
+      alert('No image captures are available to export yet.');
+      return;
+    }
+
+    setExportingCaptureZip(true);
+    try {
+      const zip = await exportAllRunCapturesZip(captureRunIds);
+      downloadBlob(zip, `deepracer-captured-runs-${new Date().toISOString().slice(0, 10)}.zip`);
+    } catch (error) {
+      console.error(error);
+      alert('Failed to build bulk capture export zip.');
+    } finally {
+      setExportingCaptureZip(false);
+    }
   }
 
   function handleClearData() {
@@ -56,13 +155,20 @@ export default function DashboardPage() {
     }
   }
 
+  function dismissHelp() {
+    setShowHelp(false);
+    localStorage.setItem('dashboard-help-dismissed', 'true');
+  }
+
   const manualRuns = runs.filter((r) => r.driveMode === 'manual');
   const aiRuns = runs.filter((r) => r.driveMode === 'ai');
+  const totalLaps = stats?.totalLaps ?? 0;
+  const totalFrames = stats?.totalFrames ?? 0;
 
   return (
     <div className="min-h-screen bg-[#0a0a1a] text-white">
-      {/* Top nav */}
-      <header className="border-b border-gray-800 bg-[#0f0f23]/80 backdrop-blur-sm sticky top-0 z-10">
+      {/* Top nav — simplified */}
+      <header className="border-b border-gray-800 bg-[#0f0f23]/80 backdrop-blur-sm sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link
@@ -78,52 +184,134 @@ export default function DashboardPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            {/* Export dropdown */}
+            <div className="relative" ref={exportRef}>
+              <button
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showExportMenu && (
+                <div className="absolute right-0 mt-1 w-52 bg-gray-900 border border-gray-700 rounded-xl shadow-xl overflow-hidden z-30">
+                  <button
+                    onClick={() => { void handleExportAllCaptureZips(); setShowExportMenu(false); }}
+                    disabled={exportingCaptureZip}
+                    className="w-full text-left px-4 py-2.5 text-xs text-cyan-300 hover:bg-gray-800 transition-colors disabled:opacity-50 border-b border-gray-800"
+                  >
+                    {exportingCaptureZip ? 'Building .zip...' : 'All Runs (.zip with images)'}
+                  </button>
+                  <button
+                    onClick={() => handleExport('json')}
+                    className="w-full text-left px-4 py-2.5 text-xs text-gray-300 hover:bg-gray-800 transition-colors border-b border-gray-800"
+                  >
+                    Training Data (.json)
+                  </button>
+                  <button
+                    onClick={() => handleExport('csv')}
+                    className="w-full text-left px-4 py-2.5 text-xs text-gray-300 hover:bg-gray-800 transition-colors"
+                  >
+                    Training Data (.csv)
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* Help toggle */}
             <button
-              onClick={() => handleExport('json')}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
+              onClick={() => setShowHelp(!showHelp)}
+              className="flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
+              title="What is this dashboard?"
             >
-              <Download className="w-3.5 h-3.5" /> JSON
-            </button>
-            <button
-              onClick={() => handleExport('csv')}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> CSV
-            </button>
-            <button
-              onClick={handleClearData}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-red-900/30 hover:bg-red-900/50 text-red-400 transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" /> Clear
+              <HelpCircle className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
-        {/* What is this? */}
-        <div className="bg-blue-900/20 border border-blue-800/30 rounded-2xl p-5 space-y-2">
-          <h2 className="text-sm font-bold text-blue-300">What is this dashboard?</h2>
-          <p className="text-sm text-gray-400 leading-relaxed">
-            Every time you drive in the simulator, the app records your <strong className="text-white">steering</strong>, <strong className="text-white">speed</strong>, <strong className="text-white">throttle</strong>, and <strong className="text-white">position</strong> ~10 times per second.
-            This is called <strong className="text-white">training data</strong>. Later, a neural network will learn to drive by studying these recordings — just like how a self-driving car learns from human examples.
-            The more laps the class drives, the better the AI will become.
-          </p>
-        </div>
-
-        {/* Stats cards */}
-        {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <StatCard icon={Database} label="Training Runs" value={stats.totalRuns} color="blue" hint="Each time you drive and stop = 1 run" />
-            <StatCard icon={Trophy} label="Total Laps" value={stats.totalLaps} color="yellow" hint="Complete laps around the track" />
-            <StatCard icon={Activity} label="Data Frames" value={stats.totalFrames.toLocaleString()} color="green" hint="Snapshots of your driving (~10/sec)" />
-            <StatCard icon={Timer} label="Best Lap" value={stats.bestLapMs ? `${(stats.bestLapMs / 1000).toFixed(2)}s` : '—'} color="purple" hint="Fastest lap time recorded" />
-            <StatCard icon={Users} label="Drive Time" value={formatDuration(stats.totalDriveTimeMs)} color="cyan" hint="Total time spent driving" />
+        {/* Collapsible explainer */}
+        {showHelp && (
+          <div className="bg-blue-900/15 border border-blue-800/25 rounded-2xl p-4 relative">
+            <button
+              onClick={dismissHelp}
+              className="absolute top-3 right-3 text-gray-500 hover:text-white transition-colors"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <h2 className="text-sm font-bold text-blue-300 mb-1">What is this dashboard?</h2>
+            <p className="text-xs text-gray-400 leading-relaxed pr-6">
+              Every time you drive in the simulator, the app records your <strong className="text-white">steering</strong>, <strong className="text-white">speed</strong>, <strong className="text-white">throttle</strong>, and <strong className="text-white">position</strong> ~10 times per second.
+              This is <strong className="text-white">training data</strong> that a neural network uses to learn to drive. The more laps the class drives, the better the AI becomes.
+            </p>
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="flex gap-1 bg-gray-900/50 rounded-xl p-1 overflow-x-auto">
+        {/* Progress banner */}
+        <div className="bg-gradient-to-r from-gray-900/80 to-gray-900/40 border border-gray-800 rounded-2xl p-5">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
+                <BarChart3 className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 uppercase tracking-wider">Collected</div>
+                <div className="text-lg font-bold text-white">{runs.length} <span className="text-sm font-normal text-gray-500">runs</span></div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-yellow-500/15 border border-yellow-500/25 flex items-center justify-center shrink-0">
+                <Trophy className="w-5 h-5 text-yellow-400" />
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 uppercase tracking-wider">Laps</div>
+                <div className="text-lg font-bold text-white">{totalLaps}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/25 flex items-center justify-center shrink-0">
+                <Timer className="w-5 h-5 text-purple-400" />
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 uppercase tracking-wider">Best Lap</div>
+                <div className="text-lg font-bold text-white">
+                  {stats?.bestLapMs ? `${(stats.bestLapMs / 1000).toFixed(2)}s` : '--'}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-green-500/15 border border-green-500/25 flex items-center justify-center shrink-0">
+                <Database className="w-5 h-5 text-green-400" />
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 uppercase tracking-wider">Frames</div>
+                <div className="text-lg font-bold text-white">{totalFrames.toLocaleString()}</div>
+              </div>
+            </div>
+            {activeRemoteModel && (
+              <div className="flex items-center gap-3 min-w-0 ml-auto">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/25 flex items-center justify-center shrink-0">
+                  <Bot className="w-5 h-5 text-cyan-400" />
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 uppercase tracking-wider">Active Model</div>
+                  <div className="text-sm font-mono font-bold text-cyan-300">{activeRemoteModel}</div>
+                </div>
+              </div>
+            )}
+          </div>
+          {/* Progress bar toward next milestone */}
+          {runs.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-800/50">
+              <ProgressMilestone totalRuns={runs.length} totalLaps={totalLaps} totalFrames={totalFrames} />
+            </div>
+          )}
+        </div>
+
+        {/* Tabs — 4 consolidated */}
+        <div className="flex gap-1 bg-gray-900/50 rounded-xl p-1">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -131,14 +319,14 @@ export default function DashboardPage() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
                   active
                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
                     : 'text-gray-400 hover:text-white hover:bg-gray-800'
                 }`}
               >
                 <Icon className="w-4 h-4" />
-                {tab.label}
+                <span className="hidden sm:inline">{tab.label}</span>
               </button>
             );
           })}
@@ -146,45 +334,81 @@ export default function DashboardPage() {
 
         {/* Tab content */}
         <div className="min-h-[500px]">
-          {runs.length === 0 ? (
+          {runs.length === 0 && activeTab !== 'models' ? (
             <EmptyState />
           ) : (
             <>
-              {activeTab === 'overview' && <OverviewTab runs={runs} manualRuns={manualRuns} aiRuns={aiRuns} stats={stats} />}
-              {activeTab === 'laps' && <LapTimeChart runs={runs} />}
-              {activeTab === 'driving' && <SpeedDistribution runs={runs} />}
-              {activeTab === 'coverage' && <TrackCoverage runs={runs} />}
-              {activeTab === 'runs' && <RunsTable runs={runs} onSelect={setSelectedRun} selectedRun={selectedRun} />}
-              {activeTab === 'timeline' && <FrameTimeline runs={runs} selectedRun={selectedRun} />}
+              {activeTab === 'driving' && (
+                <MyDrivingTab runs={runs} manualRuns={manualRuns} aiRuns={aiRuns} stats={stats} />
+              )}
+              {activeTab === 'data' && (
+                <TrainingDataTab
+                  runs={runs}
+                  selectedRun={selectedRun}
+                  onSelect={setSelectedRun}
+                  onDeleteRuns={handleDeleteRuns}
+                  onDownloadRun={handleDownloadRunCapture}
+                />
+              )}
+              {activeTab === 'models' && (
+                <CloudTab
+                  apiConfigured={isApiConfigured()}
+                  models={remoteModels}
+                  jobs={remoteJobs}
+                  activeModelVersion={activeRemoteModel}
+                  loading={remoteLoading}
+                  error={remoteError}
+                  creatingJob={creatingJob}
+                  onRefresh={refreshCloudData}
+                  onSetActive={async (version) => {
+                    await setRemoteActiveModelVersion(version);
+                    await refreshCloudData();
+                  }}
+                  onStartTraining={async () => {
+                    setCreatingJob(true);
+                    try {
+                      await createTrainingJob({
+                        dataset: { manual_only: true, max_runs: 200 },
+                        hyperparams: { epochs: 3, batch_size: 32, learning_rate: 0.0003 },
+                        export: { set_active: true },
+                      });
+                      await refreshCloudData();
+                    } finally {
+                      setCreatingJob(false);
+                    }
+                  }}
+                />
+              )}
+              {activeTab === 'inspector' && <FrameTimeline runs={runs} selectedRun={selectedRun} />}
             </>
           )}
         </div>
+
+        {/* Danger zone — clear data moved to bottom */}
+        {runs.length > 0 && (
+          <div className="border-t border-gray-800/50 pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Danger Zone</h3>
+                <p className="text-xs text-gray-600 mt-0.5">Permanently delete all local training data</p>
+              </div>
+              <button
+                onClick={handleClearData}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-red-900/20 hover:bg-red-900/40 text-red-400/80 hover:text-red-400 border border-red-900/30 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear All Data
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function StatCard({ icon: Icon, label, value, color, hint }: { icon: typeof Database; label: string; value: string | number; color: string; hint?: string }) {
-  const colors: Record<string, string> = {
-    blue: 'text-blue-400 bg-blue-400/10 border-blue-400/20',
-    yellow: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20',
-    green: 'text-green-400 bg-green-400/10 border-green-400/20',
-    purple: 'text-purple-400 bg-purple-400/10 border-purple-400/20',
-    cyan: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20',
-  };
-  return (
-    <div className={`rounded-2xl border p-5 ${colors[color]}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <Icon className="w-4 h-4 opacity-70" />
-        <span className="text-xs uppercase tracking-wider opacity-70">{label}</span>
-      </div>
-      <div className="text-2xl font-bold text-white">{value}</div>
-      {hint && <div className="text-[10px] text-gray-500 mt-1">{hint}</div>}
-    </div>
-  );
-}
-
-function OverviewTab({ runs, manualRuns, aiRuns, stats }: { runs: TrainingRun[]; manualRuns: TrainingRun[]; aiRuns: TrainingRun[]; stats: AccumulatedStats | null }) {
+/* ─── My Driving Tab ─── */
+function MyDrivingTab({ runs, manualRuns, aiRuns, stats }: { runs: TrainingRun[]; manualRuns: TrainingRun[]; aiRuns: TrainingRun[]; stats: AccumulatedStats | null }) {
   const trackBreakdown: Record<string, { runs: number; laps: number; frames: number }> = {};
   for (const r of runs) {
     const existing = trackBreakdown[r.trackId] || { runs: 0, laps: 0, frames: 0 };
@@ -195,102 +419,354 @@ function OverviewTab({ runs, manualRuns, aiRuns, stats }: { runs: TrainingRun[];
   }
 
   return (
-    <div className="grid md:grid-cols-2 gap-6">
-      {/* Data breakdown */}
-      <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 space-y-4">
-        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Data Breakdown</h3>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between p-3 bg-blue-900/20 rounded-xl">
-            <span className="text-sm text-gray-300">Manual Driving</span>
-            <div className="flex items-center gap-3 text-xs text-gray-400">
-              <span><strong className="text-white">{manualRuns.length}</strong> runs</span>
-              <span><strong className="text-white">{manualRuns.reduce((s, r) => s + r.lapCount, 0)}</strong> laps</span>
-              <span><strong className="text-white">{manualRuns.reduce((s, r) => s + r.frames, 0).toLocaleString()}</strong> frames</span>
-            </div>
-          </div>
-          <div className="flex items-center justify-between p-3 bg-purple-900/20 rounded-xl">
-            <span className="text-sm text-gray-300">AI Driving</span>
-            <div className="flex items-center gap-3 text-xs text-gray-400">
-              <span><strong className="text-white">{aiRuns.length}</strong> runs</span>
-              <span><strong className="text-white">{aiRuns.reduce((s, r) => s + r.lapCount, 0)}</strong> laps</span>
-              <span><strong className="text-white">{aiRuns.reduce((s, r) => s + r.frames, 0).toLocaleString()}</strong> frames</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Track breakdown */}
-      <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 space-y-4">
-        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">By Track</h3>
-        <div className="space-y-3">
-          {Object.entries(trackBreakdown).map(([trackId, data]) => {
-            const totalFrames = stats?.totalFrames || 1;
-            const pct = Math.round((data.frames / totalFrames) * 100);
-            return (
-              <div key={trackId} className="space-y-1.5">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-300 capitalize">{trackId.replace('-', ' ')}</span>
-                  <span className="text-xs text-gray-500">{data.runs} runs · {data.laps} laps · {data.frames.toLocaleString()} frames</span>
-                </div>
-                <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
-                </div>
+    <div className="space-y-6">
+      {/* Data split + track breakdown */}
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-5 space-y-3">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Data Split</h3>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between p-3 bg-blue-900/15 border border-blue-900/20 rounded-xl">
+              <span className="text-sm text-gray-300">Manual</span>
+              <div className="flex items-center gap-3 text-xs text-gray-400">
+                <span><strong className="text-white">{manualRuns.length}</strong> runs</span>
+                <span><strong className="text-white">{manualRuns.reduce((s, r) => s + r.lapCount, 0)}</strong> laps</span>
               </div>
-            );
-          })}
+            </div>
+            <div className="flex items-center justify-between p-3 bg-purple-900/15 border border-purple-900/20 rounded-xl">
+              <span className="text-sm text-gray-300">AI</span>
+              <div className="flex items-center gap-3 text-xs text-gray-400">
+                <span><strong className="text-white">{aiRuns.length}</strong> runs</span>
+                <span><strong className="text-white">{aiRuns.reduce((s, r) => s + r.lapCount, 0)}</strong> laps</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-5 space-y-3">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">By Track</h3>
+          <div className="space-y-2">
+            {Object.entries(trackBreakdown).map(([trackId, data]) => {
+              const totalFrames = stats?.totalFrames || 1;
+              const pct = Math.round((data.frames / totalFrames) * 100);
+              return (
+                <div key={trackId} className="space-y-1">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-300 capitalize">{trackId.replace('-', ' ')}</span>
+                    <span className="text-xs text-gray-500">{data.runs} runs, {data.laps} laps</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+            {Object.keys(trackBreakdown).length === 0 && (
+              <div className="text-xs text-gray-600 py-4 text-center">No track data yet</div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Recent runs */}
-      <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-6 space-y-4 md:col-span-2">
-        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Recent Runs</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-xs text-gray-500 uppercase tracking-wider border-b border-gray-800">
-                <th className="text-left py-2 pr-4">Track</th>
-                <th className="text-left py-2 pr-4">Mode</th>
-                <th className="text-right py-2 pr-4">Laps</th>
-                <th className="text-right py-2 pr-4">Frames</th>
-                <th className="text-right py-2 pr-4">Best Lap</th>
-                <th className="text-right py-2">Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.slice(-10).reverse().map((r) => (
-                <tr key={r.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td className="py-2.5 pr-4 capitalize text-gray-300">{r.trackId.replace('-', ' ')}</td>
-                  <td className="py-2.5 pr-4">
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${r.driveMode === 'ai' ? 'bg-purple-900/40 text-purple-400' : 'bg-blue-900/40 text-blue-400'}`}>
-                      {r.driveMode === 'ai' ? 'AI' : 'Manual'}
+      {/* Lap time progression */}
+      <LapTimeChart runs={runs} />
+
+      {/* Driving analysis */}
+      <SpeedDistribution runs={runs} />
+    </div>
+  );
+}
+
+/* ─── Training Data Tab ─── */
+function TrainingDataTab({
+  runs,
+  selectedRun,
+  onSelect,
+  onDeleteRuns,
+  onDownloadRun,
+}: {
+  runs: TrainingRun[];
+  selectedRun: TrainingRun | null;
+  onSelect: (run: TrainingRun) => void;
+  onDeleteRuns: (ids: string[]) => void;
+  onDownloadRun: (run: TrainingRun) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      {/* Track coverage */}
+      <TrackCoverage runs={runs} />
+
+      {/* Full runs table */}
+      <RunsTable
+        runs={runs}
+        onSelect={onSelect}
+        selectedRun={selectedRun}
+        onDeleteRuns={onDeleteRuns}
+        onDownloadRun={onDownloadRun}
+      />
+    </div>
+  );
+}
+
+/* ─── Cloud / AI Models Tab ─── */
+function CloudTab({
+  apiConfigured,
+  models,
+  jobs,
+  activeModelVersion,
+  loading,
+  error,
+  creatingJob,
+  onRefresh,
+  onSetActive,
+  onStartTraining,
+}: {
+  apiConfigured: boolean;
+  models: ModelRecordPayload[];
+  jobs: TrainingJobRecordPayload[];
+  activeModelVersion: string | null;
+  loading: boolean;
+  error: string | null;
+  creatingJob: boolean;
+  onRefresh: () => void | Promise<void>;
+  onSetActive: (version: string) => Promise<void>;
+  onStartTraining: () => Promise<void>;
+}) {
+  const [busyActiveVersion, setBusyActiveVersion] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  if (!apiConfigured) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center space-y-4">
+        <Cloud className="w-12 h-12 text-gray-700" />
+        <h2 className="text-lg font-bold text-gray-400">API Not Connected</h2>
+        <p className="text-sm text-gray-500 max-w-md">
+          Set <code className="text-white bg-gray-800 px-1.5 py-0.5 rounded text-xs">NEXT_PUBLIC_API_URL</code> in your environment to enable shared models and training jobs.
+        </p>
+      </div>
+    );
+  }
+
+  if (loading && models.length === 0 && jobs.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
+        <RefreshCcw className="w-8 h-8 text-gray-600 animate-spin" />
+        <p className="text-sm text-gray-500">Loading models and training jobs...</p>
+      </div>
+    );
+  }
+
+  const queuedJobs = jobs.filter((j) => j.status === 'queued' || j.status === 'running');
+
+  return (
+    <div className="space-y-6">
+      {/* Action bar */}
+      <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-300">AI Models and Training</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Start a training job, then monitor status below. Models are shared across the team.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { void onStartTraining().catch((e) => setActionError(e instanceof Error ? e.message : String(e))); }}
+            disabled={creatingJob}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs rounded-lg bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-medium disabled:opacity-50 transition-all shadow-lg shadow-purple-900/20"
+          >
+            <Play className="w-3.5 h-3.5" />
+            {creatingJob ? 'Queueing...' : 'Start Training Job'}
+          </button>
+          <button
+            onClick={() => { void onRefresh(); }}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCcw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+        {(error || actionError) && (
+          <div className="w-full text-xs text-red-300 bg-red-950/30 border border-red-900/40 rounded-lg px-3 py-2">
+            {error || actionError}
+          </div>
+        )}
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-6">
+        {/* Models list */}
+        <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <Bot className="w-4 h-4 text-purple-400" />
+            <h4 className="text-sm font-semibold text-gray-200">Models</h4>
+          </div>
+          <div className="text-xs text-gray-500">
+            Active: <span className="font-mono text-green-300">{activeModelVersion ?? 'none'}</span>
+          </div>
+          <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+            {models.length === 0 ? (
+              <div className="text-center py-8">
+                <Bot className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+                <p className="text-xs text-gray-500">No models yet. Start a training job to create one.</p>
+              </div>
+            ) : models.map((m) => {
+              const metrics = (m.training?.metrics as Record<string, unknown> | undefined) ?? {};
+              const trainLoss = typeof metrics.train_loss === 'number' ? metrics.train_loss : null;
+              const valLoss = typeof metrics.val_loss === 'number' ? metrics.val_loss : null;
+              const hasOnnx = !!m.artifacts?.onnx_uri;
+              const isActive = activeModelVersion === m.model_version;
+              return (
+                <div key={m.model_id} className={`rounded-xl border p-3 ${isActive ? 'border-green-700/50 bg-green-950/10' : 'border-gray-800 bg-gray-950/20'}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-mono text-sm text-gray-100">{m.model_version}</div>
+                      <div className="text-[11px] text-gray-500">{new Date(m.created_at).toLocaleString()}</div>
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${hasOnnx ? 'bg-cyan-900/30 text-cyan-300' : 'bg-yellow-900/30 text-yellow-300'}`}>
+                      {hasOnnx ? 'ONNX' : 'No ONNX'}
                     </span>
-                  </td>
-                  <td className="py-2.5 pr-4 text-right text-gray-300">{r.lapCount}</td>
-                  <td className="py-2.5 pr-4 text-right text-gray-400">{r.frames.toLocaleString()}</td>
-                  <td className="py-2.5 pr-4 text-right font-mono text-green-400">{r.bestLapMs ? `${(r.bestLapMs / 1000).toFixed(2)}s` : '—'}</td>
-                  <td className="py-2.5 text-right text-gray-500 text-xs">{new Date(r.timestamp).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                  <div className="mt-2 text-xs text-gray-400 grid grid-cols-2 gap-2">
+                    <div>Train: <span className="text-gray-200">{trainLoss?.toFixed(4) ?? '--'}</span></div>
+                    <div>Val: <span className="text-gray-200">{valLoss?.toFixed(4) ?? '--'}</span></div>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setBusyActiveVersion(m.model_version);
+                        setActionError(null);
+                        void onSetActive(m.model_version)
+                          .catch((e) => setActionError(e instanceof Error ? e.message : String(e)))
+                          .finally(() => setBusyActiveVersion(null));
+                      }}
+                      disabled={isActive || busyActiveVersion !== null}
+                      className={`px-2.5 py-1 text-[11px] rounded-md transition-colors disabled:opacity-50 ${
+                        isActive
+                          ? 'bg-green-900/30 text-green-300 border border-green-800/30'
+                          : 'bg-gray-800 hover:bg-gray-700 text-gray-200'
+                      }`}
+                    >
+                      {isActive ? 'Active' : busyActiveVersion === m.model_version ? 'Setting...' : 'Set Active'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Training jobs */}
+        <div className="lg:col-span-2 bg-gray-900/50 border border-gray-800 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-gray-200">Training Jobs</h4>
+            <div className="text-xs text-gray-500">
+              {queuedJobs.length > 0 ? (
+                <span className="text-yellow-300">{queuedJobs.length} in progress</span>
+              ) : 'Idle'}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+            {jobs.length === 0 ? (
+              <div className="text-center py-8">
+                <Play className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+                <p className="text-xs text-gray-500">No training jobs yet. Click &quot;Start Training Job&quot; to begin.</p>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-gray-900">
+                  <tr className="text-xs text-gray-500 uppercase tracking-wider border-b border-gray-800">
+                    <th className="text-left py-2 pr-3">Job</th>
+                    <th className="text-left py-2 pr-3">Status</th>
+                    <th className="text-left py-2 pr-3">Stage</th>
+                    <th className="text-left py-2 pr-3">Output</th>
+                    <th className="text-right py-2">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {jobs.map((j) => {
+                    const progress = j.progress ?? {};
+                    const outputs = j.outputs ?? {};
+                    const stage = typeof progress.stage === 'string' ? progress.stage : '--';
+                    const modelVersion = typeof outputs.model_version === 'string' ? outputs.model_version : '--';
+                    const statusClass =
+                      j.status === 'succeeded' ? 'text-green-300 bg-green-900/20' :
+                      j.status === 'failed' ? 'text-red-300 bg-red-900/20' :
+                      j.status === 'running' ? 'text-yellow-300 bg-yellow-900/20' :
+                      'text-gray-300 bg-gray-800';
+                    return (
+                      <tr key={j.job_id} className="border-b border-gray-800/40 hover:bg-gray-800/20">
+                        <td className="py-2.5 pr-3 font-mono text-xs text-gray-300">{j.job_id.slice(0, 8)}</td>
+                        <td className="py-2.5 pr-3">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] ${statusClass}`}>{j.status}</span>
+                        </td>
+                        <td className="py-2.5 pr-3 text-gray-400">{stage}</td>
+                        <td className="py-2.5 pr-3 font-mono text-xs text-cyan-300">{modelVersion}</td>
+                        <td className="py-2.5 text-right text-xs text-gray-500">{new Date(j.created_at).toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
+/* ─── Progress Milestone ─── */
+function ProgressMilestone({ totalRuns, totalLaps, totalFrames }: { totalRuns: number; totalLaps: number; totalFrames: number }) {
+  // Define milestones
+  const milestones = [
+    { label: 'First training', target: 10, unit: 'runs', current: totalRuns },
+    { label: 'Solid dataset', target: 50, unit: 'runs', current: totalRuns },
+    { label: 'Large dataset', target: 200, unit: 'runs', current: totalRuns },
+    { label: 'Massive dataset', target: 1000, unit: 'runs', current: totalRuns },
+  ];
+
+  // Find the next incomplete milestone
+  const next = milestones.find((m) => m.current < m.target) ?? milestones[milestones.length - 1];
+  const pct = Math.min(100, Math.round((next.current / next.target) * 100));
+
+  return (
+    <div className="flex items-center gap-4">
+      <div className="flex-1">
+        <div className="flex items-center justify-between text-xs mb-1.5">
+          <span className="text-gray-400">
+            Next milestone: <strong className="text-gray-200">{next.label}</strong>
+          </span>
+          <span className="text-gray-500">{next.current} / {next.target} {next.unit}</span>
+        </div>
+        <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-500"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+      {pct >= 100 && (
+        <span className="text-xs text-green-400 font-medium whitespace-nowrap">Complete</span>
+      )}
+    </div>
+  );
+}
+
+/* ─── Empty State ─── */
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-      <Database className="w-16 h-16 text-gray-700" />
-      <h2 className="text-xl font-bold text-gray-400">No Training Data Yet</h2>
+      <div className="w-16 h-16 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+        <Database className="w-8 h-8 text-blue-400" />
+      </div>
+      <h2 className="text-xl font-bold text-gray-300">No Training Data Yet</h2>
       <p className="text-sm text-gray-500 max-w-md">
-        Drive some laps in the simulator to start generating training data.
-        Every lap captures steering, throttle, speed, and position data.
+        Drive laps in the simulator to start generating training data.
+        Every lap captures steering, throttle, speed, and position data that the AI will learn from.
       </p>
       <Link
         href="/"
-        className="mt-4 px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
+        className="mt-4 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-medium transition-all shadow-lg shadow-blue-900/20"
       >
         Start Driving
       </Link>

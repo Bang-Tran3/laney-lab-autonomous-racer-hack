@@ -12,6 +12,8 @@ export interface TrainingRun {
   driveMode: 'manual' | 'ai';
   lapCount: number;
   frames: number;
+  hasFrameCapture?: boolean;
+  captureFrameCount?: number;
   bestLapMs: number | null;
   offTrackCount: number;
   durationMs: number;
@@ -48,7 +50,12 @@ export function getRuns(): TrainingRun[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const runs = raw ? JSON.parse(raw) as TrainingRun[] : [];
+    return runs.map((run) => ({
+      ...run,
+      hasFrameCapture: run.hasFrameCapture ?? false,
+      captureFrameCount: run.captureFrameCount ?? 0,
+    }));
   } catch {
     return [];
   }
@@ -104,6 +111,97 @@ export function saveRun(run: Omit<TrainingRun, 'id' | 'timestamp'>): TrainingRun
   localStorage.setItem(STATS_KEY, JSON.stringify(stats));
 
   return fullRun;
+}
+
+export function deleteRun(id: string): void {
+  const runs = getRuns().filter((r) => r.id !== id);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(runs));
+  recalculateStats(runs);
+}
+
+export function deleteRuns(ids: string[]): void {
+  const idSet = new Set(ids);
+  const runs = getRuns().filter((r) => !idSet.has(r.id));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(runs));
+  recalculateStats(runs);
+}
+
+export function updateRunCaptureStatus(id: string, values: { hasFrameCapture: boolean; captureFrameCount: number }): void {
+  const runs = getRuns();
+  let changed = false;
+  const updated = runs.map((r) => {
+    if (r.id !== id) return r;
+    changed = true;
+    return { ...r, ...values };
+  });
+  if (!changed) return;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+}
+
+function recalculateStats(runs: TrainingRun[]): void {
+  const stats: AccumulatedStats = {
+    totalRuns: runs.length,
+    totalLaps: runs.reduce((s, r) => s + r.lapCount, 0),
+    totalFrames: runs.reduce((s, r) => s + r.frames, 0),
+    totalDriveTimeMs: runs.reduce((s, r) => s + r.durationMs, 0),
+    bestLapMs: null,
+  };
+  for (const r of runs) {
+    if (r.bestLapMs !== null) {
+      stats.bestLapMs = stats.bestLapMs === null ? r.bestLapMs : Math.min(stats.bestLapMs, r.bestLapMs);
+    }
+  }
+  localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+}
+
+export type AnomalyFlag = 'long_duration' | 'no_laps' | 'high_offtrack' | 'no_movement';
+
+export interface FlaggedRun {
+  run: TrainingRun;
+  flags: { type: AnomalyFlag; label: string; detail: string }[];
+}
+
+export function flagAnomalies(runs: TrainingRun[]): FlaggedRun[] {
+  if (runs.length === 0) return [];
+
+  // Compute median duration for runs with at least 1 lap
+  const durations = runs.filter((r) => r.lapCount > 0).map((r) => r.durationMs).sort((a, b) => a - b);
+  const medianDuration = durations.length > 0 ? durations[Math.floor(durations.length / 2)] : 60_000;
+  // Threshold: 5x median or 5 minutes, whichever is larger
+  const durationThreshold = Math.max(medianDuration * 5, 5 * 60_000);
+
+  const flagged: FlaggedRun[] = [];
+
+  for (const run of runs) {
+    const flags: FlaggedRun['flags'] = [];
+
+    // Long duration
+    if (run.durationMs > durationThreshold) {
+      const mins = (run.durationMs / 60_000).toFixed(1);
+      flags.push({ type: 'long_duration', label: 'Long run', detail: `${mins} min — ${(durationThreshold / 60_000).toFixed(0)}+ min is unusual` });
+    }
+
+    // No laps completed but significant frames
+    if (run.lapCount === 0 && run.frames > 100) {
+      flags.push({ type: 'no_laps', label: 'No laps', detail: `${run.frames.toLocaleString()} frames captured but 0 laps completed` });
+    }
+
+    // High off-track rate (>50% of frames estimated)
+    if (run.lapCount > 0 && run.offTrackCount > run.lapCount * 10) {
+      flags.push({ type: 'high_offtrack', label: 'High off-track', detail: `${run.offTrackCount} off-track events in ${run.lapCount} laps` });
+    }
+
+    // No meaningful movement (very few frames for the duration)
+    if (run.durationMs > 30_000 && run.frames < 10) {
+      flags.push({ type: 'no_movement', label: 'No movement', detail: `Only ${run.frames} frames in ${(run.durationMs / 1000).toFixed(0)}s` });
+    }
+
+    if (flags.length > 0) {
+      flagged.push({ run, flags });
+    }
+  }
+
+  return flagged;
 }
 
 export function exportRunsAsJSON(): string {

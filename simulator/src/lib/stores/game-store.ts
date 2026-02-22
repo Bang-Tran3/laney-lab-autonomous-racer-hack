@@ -10,8 +10,10 @@ export interface CarState {
   z: number;
   rotation: number; // radians, 0 = facing +Z
   speed: number;
-  steering: number; // -1 (left) to 1 (right)
-  throttle: number; // 0 to 1
+  steering: number; // -1 (left) to 1 (right) — actual ramped value
+  throttle: number; // 0 to 1 — actual ramped value
+  steerTarget: number; // -1 (left) to 1 (right) — desired target
+  throttleTarget: number; // 0 to 1 — desired target
 }
 
 export interface LapRecord {
@@ -36,9 +38,15 @@ interface GameState {
   mode: 'menu' | 'driving' | 'paused' | 'replay' | 'autonomous' | 'auto-paused' | 'run-complete';
   trackId: string;
   driveMode: 'manual' | 'ai';
+  aiModelSelectionMode: 'active' | 'pinned';
+  aiPinnedModelVersion: string | null;
+  aiSteeringMode: 'learned' | 'waypoint';
   setTrackId: (id: string) => void;
   setMode: (mode: GameState['mode']) => void;
   setDriveMode: (dm: GameState['driveMode']) => void;
+  setAiModelSelectionMode: (mode: 'active' | 'pinned') => void;
+  setAiPinnedModelVersion: (version: string | null) => void;
+  setAiSteeringMode: (mode: 'learned' | 'waypoint') => void;
 
   // Car
   car: CarState;
@@ -95,11 +103,17 @@ export const useGameStore = create<GameState>((set, get) => ({
   mode: 'menu',
   trackId: 'oval',
   driveMode: 'manual',
+  aiModelSelectionMode: 'active',
+  aiPinnedModelVersion: null,
+  aiSteeringMode: 'learned',
   setTrackId: (id) => set({ trackId: id }),
   setMode: (mode) => set({ mode }),
   setDriveMode: (dm) => set({ driveMode: dm }),
+  setAiModelSelectionMode: (aiModelSelectionMode) => set({ aiModelSelectionMode }),
+  setAiPinnedModelVersion: (aiPinnedModelVersion) => set({ aiPinnedModelVersion }),
+  setAiSteeringMode: (aiSteeringMode) => set({ aiSteeringMode }),
 
-  car: { x: 30, z: 0, rotation: Math.PI / 2, speed: 0, steering: 0, throttle: 0 },
+  car: { x: 30, z: 0, rotation: Math.PI / 2, speed: 0, steering: 0, throttle: 0, steerTarget: 0, throttleTarget: 0 },
   updateCar: (partial) => set((s) => ({ car: { ...s.car, ...partial } })),
 
   keys: {},

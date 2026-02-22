@@ -1,0 +1,13 @@
+{
+  "model_version": "v0002",
+  "dataset_id": "dataset-20260222T055315Z",
+  "run_count": 0,
+  "frame_count": 0,
+  "trainer_mode": "placeholder",
+  "metrics": {
+    "train_loss": null,
+    "val_loss": null,
+    "note": "not_enough_samples",
+    "sample_count": 0
+  }
+}

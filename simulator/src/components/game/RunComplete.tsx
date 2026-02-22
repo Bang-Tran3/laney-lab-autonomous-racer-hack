@@ -2,8 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useGameStore } from '@/lib/stores/game-store';
-import { saveRun, getStats, type AccumulatedStats } from '@/lib/data/training-data';
-import { CheckCircle, Database, Trophy, Timer, ChevronRight } from 'lucide-react';
+import { saveRun, getStats, updateRunCaptureStatus, type AccumulatedStats, type TrainingRun } from '@/lib/data/training-data';
+import { finalizeCapturedFramesToIndexedDb, getPendingCaptureFrameCount } from '@/lib/capture/frame-capture';
+import { downloadBlob, exportRunCaptureZip } from '@/lib/capture/frame-store';
+import { enqueueRunForSync, flushRunSyncQueue } from '@/lib/api/run-sync-queue';
+import { CheckCircle, Database, Trophy, Timer, ChevronRight, Camera, Download } from 'lucide-react';
 
 /**
  * Run complete overlay — shown after a driving session ends.
@@ -15,41 +18,101 @@ export function RunComplete() {
   const [stats, setStats] = useState<AccumulatedStats | null>(null);
   const [runFrames, setRunFrames] = useState(0);
   const [runLaps, setRunLaps] = useState(0);
+  const [captureFrames, setCaptureFrames] = useState(0);
+  const [captureStatus, setCaptureStatus] = useState<'idle' | 'saving' | 'saved' | 'none' | 'error'>('idle');
+  const [savedRun, setSavedRun] = useState<TrainingRun | null>(null);
+  const [downloadingCapture, setDownloadingCapture] = useState(false);
 
   useEffect(() => {
     if (mode !== 'run-complete') {
       setSaved(false);
+      setSavedRun(null);
+      setCaptureStatus('idle');
+      setCaptureFrames(0);
       return;
     }
     if (saved) return;
 
-    const store = useGameStore.getState();
-    const frames = store.controlLog.length;
-    const laps = store.lapCount;
+    const pendingCaptureFrames = getPendingCaptureFrameCount();
+    setCaptureFrames(pendingCaptureFrames);
 
-    if (frames > 0) {
-      saveRun({
-        trackId: store.trackId,
-        driveMode: store.driveMode,
-        lapCount: laps,
-        frames,
-        bestLapMs: store.bestLapMs,
-        offTrackCount: store.offTrackCount,
-        durationMs: store.elapsedMs,
-        controlLog: store.controlLog,
-      });
-    }
+    void (async () => {
+      const store = useGameStore.getState();
+      const frames = store.controlLog.length;
+      const laps = store.lapCount;
 
-    setRunFrames(frames);
-    setRunLaps(laps);
-    setStats(getStats());
-    setSaved(true);
+      let run: TrainingRun | null = null;
+      if (frames > 0) {
+        run = saveRun({
+          trackId: store.trackId,
+          driveMode: store.driveMode,
+          lapCount: laps,
+          frames,
+          bestLapMs: store.bestLapMs,
+          offTrackCount: store.offTrackCount,
+          durationMs: store.elapsedMs,
+          controlLog: store.controlLog,
+          hasFrameCapture: false,
+          captureFrameCount: 0,
+        });
+      }
+
+      if (run && pendingCaptureFrames > 0) {
+        try {
+          setCaptureStatus('saving');
+          const savedCaptureFrames = await finalizeCapturedFramesToIndexedDb({
+            runId: run.id,
+            trackId: run.trackId,
+            driveMode: run.driveMode,
+            durationMs: run.durationMs,
+            lapCount: run.lapCount,
+            bestLapMs: run.bestLapMs,
+            offTrackCount: run.offTrackCount,
+          });
+          updateRunCaptureStatus(run.id, {
+            hasFrameCapture: savedCaptureFrames > 0,
+            captureFrameCount: savedCaptureFrames,
+          });
+          if (savedCaptureFrames > 0) {
+            enqueueRunForSync(run.id);
+            void flushRunSyncQueue();
+          }
+          setCaptureFrames(savedCaptureFrames);
+          setCaptureStatus(savedCaptureFrames > 0 ? 'saved' : 'none');
+        } catch (error) {
+          console.error('Failed to persist captured frames to IndexedDB', error);
+          setCaptureStatus('error');
+        }
+      } else {
+        setCaptureStatus(pendingCaptureFrames > 0 ? 'error' : 'none');
+      }
+
+      setSavedRun(run);
+      setRunFrames(frames);
+      setRunLaps(laps);
+      setStats(getStats());
+      setSaved(true);
+    })();
   }, [mode, saved]);
 
   if (mode !== 'run-complete') return null;
 
   function backToMenu() {
     useGameStore.getState().setMode('menu');
+  }
+
+  async function downloadRunCapture() {
+    if (!savedRun) return;
+    setDownloadingCapture(true);
+    try {
+      const zip = await exportRunCaptureZip(savedRun.id);
+      downloadBlob(zip, `deepracer-run-${savedRun.id}.zip`);
+    } catch (error) {
+      console.error(error);
+      alert('No image capture export is available for this run yet.');
+    } finally {
+      setDownloadingCapture(false);
+    }
   }
 
   return (
@@ -65,7 +128,7 @@ export function RunComplete() {
         {/* This run */}
         <div className="bg-white/5 rounded-xl p-4 space-y-3">
           <div className="text-xs text-gray-400 uppercase tracking-wider font-medium">This Run</div>
-          <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3">
             <div className="flex items-center gap-2">
               <Trophy className="w-4 h-4 text-yellow-400" />
               <div>
@@ -78,6 +141,13 @@ export function RunComplete() {
               <div>
                 <div className="text-lg font-bold text-white">{runFrames.toLocaleString()}</div>
                 <div className="text-[10px] text-gray-500">Data Frames</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Camera className="w-4 h-4 text-cyan-400" />
+              <div>
+                <div className="text-lg font-bold text-white">{captureFrames.toLocaleString()}</div>
+                <div className="text-[10px] text-gray-500">Camera Frames</div>
               </div>
             </div>
           </div>
@@ -112,6 +182,14 @@ export function RunComplete() {
 
         {/* CTA */}
         <button
+          onClick={downloadRunCapture}
+          disabled={!savedRun || captureStatus === 'saving' || captureFrames === 0 || downloadingCapture}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-cyan-700/80 enabled:hover:bg-cyan-600 disabled:bg-gray-800 disabled:text-gray-500 text-white font-medium transition-colors"
+        >
+          <Download className="w-4 h-4" />
+          {downloadingCapture ? 'Preparing .zip...' : 'Download Run (.zip)'}
+        </button>
+        <button
           onClick={backToMenu}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
         >
@@ -119,7 +197,10 @@ export function RunComplete() {
         </button>
 
         <p className="text-center text-[10px] text-gray-600">
-          Data is saved locally. It will sync to the training server when connected.
+          {captureStatus === 'saving' && 'Saving camera frames to IndexedDB...'}
+          {captureStatus === 'saved' && 'Telemetry + camera frames saved locally. Export .zip to train offline.'}
+          {captureStatus === 'none' && 'Telemetry saved locally. Camera capture was not available for this run.'}
+          {captureStatus === 'error' && 'Telemetry saved, but camera frames failed to save. Check browser storage permissions.'}
         </p>
       </div>
     </div>

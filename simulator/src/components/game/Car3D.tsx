@@ -5,6 +5,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '@/lib/stores/game-store';
 import { getTrack } from '@/lib/tracks/track-data';
+import { useAiDriverStore } from '@/lib/inference/ai-driver-store';
 
 const MAX_SPEED = 25;
 const ACCELERATION = 12;
@@ -17,6 +18,19 @@ const CAR_HEIGHT = 0.6;
 
 const AI_TARGET_SPEED = 14;
 const AI_LOOKAHEAD = 2; // waypoints ahead to steer toward
+const AI_MODEL_STALE_MS = 800;
+
+// Target-ramp constants
+const STEER_RAMP = 5.0; // how fast steering moves toward target (per second)
+const THROTTLE_RAMP = 3.0; // how fast throttle moves toward target (per second)
+const STEER_DAMP = 3.0; // auto-recenter damping when no steer input
+
+function clamp(v: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, v));
+}
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
 
 /**
  * The player car — reads keyboard input OR AI waypoint-following,
@@ -31,6 +45,7 @@ export function Car3D() {
     const store = useGameStore.getState();
     const isManual = store.mode === 'driving';
     const isAuto = store.mode === 'autonomous';
+    const preferLearnedModel = store.aiSteeringMode === 'learned';
     if (!isManual && !isAuto) {
       // Still update mesh position for paused states
       if (meshRef.current) {
@@ -46,7 +61,7 @@ export function Car3D() {
     const effectiveMaxSpeed = MAX_SPEED * (store.maxSpeedPct / 100);
 
     if (isAuto) {
-      // --- AI waypoint-following driver ---
+      // --- AI steering: learned model when available, waypoint follower fallback ---
       const wp = track.waypoints;
       // Find closest waypoint
       let closestDist = Infinity;
@@ -78,13 +93,29 @@ export function Car3D() {
       while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
       while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
 
-      // Steer toward target
-      const steerAmount = Math.max(-1, Math.min(1, angleDiff * 2.5));
-      car.steering = steerAmount;
-      car.throttle = 1;
+      const aiRuntime = useAiDriverStore.getState();
+      const modelPredictionFresh = aiRuntime.predictedSteering !== null
+        && aiRuntime.lastInferenceAtMs !== null
+        && (performance.now() - aiRuntime.lastInferenceAtMs) <= AI_MODEL_STALE_MS;
+      const useModelSteering = preferLearnedModel && aiRuntime.status === 'ready' && modelPredictionFresh;
+
+      // AI sets targets directly (already continuous)
+      car.steerTarget = useModelSteering
+        ? clamp(aiRuntime.predictedSteering ?? 0, -1, 1)
+        : clamp(angleDiff * 2.5, -1, 1);
+      car.throttleTarget = 1;
+      aiRuntime.setControlSource(useModelSteering ? 'model' : 'waypoint');
+
+      // Ramp actual values toward targets (same pipeline as manual)
+      car.steering += clamp(car.steerTarget - car.steering, -STEER_RAMP * dt, STEER_RAMP * dt);
+      car.throttle += clamp(car.throttleTarget - car.throttle, -THROTTLE_RAMP * dt, THROTTLE_RAMP * dt);
+      car.steering = clamp(car.steering, -1, 1);
+      car.throttle = clamp(car.throttle, 0, 1);
 
       // Speed control — slow down for sharp turns
-      const turnSharpness = Math.abs(angleDiff);
+      const turnSharpness = useModelSteering
+        ? Math.abs(car.steerTarget) * 0.9
+        : Math.abs(angleDiff);
       const targetSpeed = turnSharpness > 0.5 ? AI_TARGET_SPEED * 0.5 : AI_TARGET_SPEED;
 
       const clampedTarget = Math.min(targetSpeed, effectiveMaxSpeed);
@@ -93,43 +124,67 @@ export function Car3D() {
       } else {
         car.speed = Math.max(car.speed - FRICTION * 2 * dt, clampedTarget);
       }
-
-      // Turn
-      if (Math.abs(car.speed) > 0.5) {
-        const turnFactor = (car.speed / MAX_SPEED) * 0.7 + 0.3;
-        car.rotation += steerAmount * TURN_SPEED * turnFactor * dt;
-      }
     } else {
-      // --- Manual keyboard input ---
+      // --- Manual keyboard input (target + ramp) ---
       const keys = store.keys;
       const up = keys['ArrowUp'] || keys['w'] || keys['W'];
       const down = keys['ArrowDown'] || keys['s'] || keys['S'];
       const left = keys['ArrowLeft'] || keys['a'] || keys['A'];
       const right = keys['ArrowRight'] || keys['d'] || keys['D'];
+      const brake = keys[' ']; // Space = panic brake
 
-      let throttle = 0;
-      if (up) throttle = 1;
-      if (down) throttle = -0.5;
-      car.throttle = Math.max(0, throttle);
+      // Steering target: digital keys set target, ramp smooths it
+      if (left) car.steerTarget = 1;
+      else if (right) car.steerTarget = -1;
+      else car.steerTarget = 0;
 
-      if (up) {
-        car.speed = Math.min(car.speed + ACCELERATION * dt, effectiveMaxSpeed);
+      // Ramp steering toward target
+      car.steering += clamp(car.steerTarget - car.steering, -STEER_RAMP * dt, STEER_RAMP * dt);
+      // Auto-recenter damping when no steer input
+      if (!left && !right) {
+        car.steering *= 1 - (STEER_DAMP * dt);
+      }
+      car.steering = clamp(car.steering, -1, 1);
+      // Snap to zero if very small
+      if (Math.abs(car.steering) < 0.01) car.steering = 0;
+
+      // Throttle target from keys
+      if (brake) {
+        car.throttleTarget = 0; // panic brake
+      } else if (up) {
+        car.throttleTarget = 1;
       } else if (down) {
-        car.speed = Math.max(car.speed - BRAKE_FORCE * dt, -5);
+        car.throttleTarget = 0; // release gas (braking handled via BRAKE_FORCE below)
       } else {
+        // No key: coast — throttle target decays toward 0
+        car.throttleTarget = Math.max(0, car.throttleTarget - 0.5 * dt);
+      }
+
+      // Ramp throttle toward target
+      car.throttle += clamp(car.throttleTarget - car.throttle, -THROTTLE_RAMP * dt, THROTTLE_RAMP * dt);
+      car.throttle = clamp(car.throttle, 0, 1);
+
+      // Apply acceleration / braking from throttle
+      if (car.throttle > 0.01) {
+        car.speed = Math.min(car.speed + ACCELERATION * car.throttle * dt, effectiveMaxSpeed);
+      }
+      if (down || brake) {
+        car.speed = Math.max(car.speed - BRAKE_FORCE * dt, -5);
+      }
+      if (!up && !down && !brake && car.throttle < 0.05) {
+        // Coast friction
         if (car.speed > 0) car.speed = Math.max(0, car.speed - FRICTION * dt);
         else if (car.speed < 0) car.speed = Math.min(0, car.speed + FRICTION * dt);
       }
+    }
 
-      let steer = 0;
-      if (left) steer = 1;
-      if (right) steer = -1;
-      car.steering = steer;
-
-      if (Math.abs(car.speed) > 0.5) {
-        const turnFactor = (car.speed / MAX_SPEED) * 0.7 + 0.3;
-        car.rotation += steer * TURN_SPEED * turnFactor * dt;
-      }
+    // --- Speed-sensitive steering (shared pipeline for both manual & AI) ---
+    if (Math.abs(car.speed) > 0.5) {
+      const speedNorm = clamp(Math.abs(car.speed) / MAX_SPEED, 0, 1);
+      const highSpeedFactor = lerp(1.0, 0.3, speedNorm);
+      const steeringForPhysics = car.steering * highSpeedFactor;
+      const turnFactor = (Math.abs(car.speed) / MAX_SPEED) * 0.7 + 0.3;
+      car.rotation += steeringForPhysics * TURN_SPEED * turnFactor * dt;
     }
 
     // Move

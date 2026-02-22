@@ -15,7 +15,6 @@ const MAX_PCT = 100;
 export function SpeedLimiter() {
   const maxSpeedPct = useGameStore((s) => s.maxSpeedPct);
   const setMaxSpeedPct = useGameStore((s) => s.setMaxSpeedPct);
-  const driveMode = useGameStore((s) => s.driveMode);
   const mode = useGameStore((s) => s.mode);
 
   const barRef = useRef<HTMLDivElement>(null);

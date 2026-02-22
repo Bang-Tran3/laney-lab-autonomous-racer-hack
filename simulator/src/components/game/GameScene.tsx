@@ -4,6 +4,7 @@ import { Canvas } from '@react-three/fiber';
 import { Track3D } from './Track3D';
 import { Car3D } from './Car3D';
 import { ChaseCamera } from './ChaseCamera';
+import { CarPOVCamera } from './CarPOVCamera';
 import { useGameStore } from '@/lib/stores/game-store';
 
 /**
@@ -39,6 +40,7 @@ export function GameScene() {
 
       {/* Car */}
       <Car3D />
+      <CarPOVCamera />
 
       {/* Camera */}
       <ChaseCamera />

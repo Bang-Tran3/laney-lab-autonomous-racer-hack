@@ -1,0 +1,5 @@
+requests==2.32.3
+Pillow==11.1.0
+numpy==2.2.2
+# Install CPU wheels manually if needed for your platform:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu

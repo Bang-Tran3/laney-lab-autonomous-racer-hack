@@ -19,7 +19,7 @@ export function ManualDriveControls() {
   const isPaused = mode === 'paused';
 
   return (
-    <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3">
+    <div className="absolute bottom-40 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3">
       <button
         onClick={() => setMode(isPaused ? 'driving' : 'paused')}
         className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${

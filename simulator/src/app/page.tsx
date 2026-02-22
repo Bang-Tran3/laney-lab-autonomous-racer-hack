@@ -11,6 +11,10 @@ import { AutoControls } from '@/components/game/AutoControls';
 import { RunComplete } from '@/components/game/RunComplete';
 import { SpeedLimiter } from '@/components/hud/SpeedLimiter';
 import { ManualDriveControls } from '@/components/hud/ManualDriveControls';
+import { ControlsHUD } from '@/components/hud/ControlsHUD';
+import { CameraFeed } from '@/components/hud/CameraFeed';
+import { ModelInferenceRunner } from '@/components/ai/ModelInferenceRunner';
+import { AiModelPanel } from '@/components/ai/AiModelPanel';
 
 const GameScene = dynamic(
   () => import('@/components/game/GameScene').then((m) => ({ default: m.GameScene })),
@@ -19,6 +23,8 @@ const GameScene = dynamic(
 
 export default function Home() {
   const mode = useGameStore((s) => s.mode);
+  const aiModelSelectionMode = useGameStore((s) => s.aiModelSelectionMode);
+  const aiPinnedModelVersion = useGameStore((s) => s.aiPinnedModelVersion);
 
   const inGame = mode !== 'menu';
 
@@ -29,6 +35,10 @@ export default function Home() {
         <TrackSelect />
       ) : (
         <div className="relative w-screen h-screen overflow-hidden bg-black">
+          <ModelInferenceRunner
+            selectionMode={aiModelSelectionMode}
+            pinnedModelVersion={aiPinnedModelVersion}
+          />
           <GameScene />
           <GameHUD />
           <Minimap />
@@ -36,6 +46,9 @@ export default function Home() {
           <AutoControls />
           <SpeedLimiter />
           <ManualDriveControls />
+          <ControlsHUD />
+          <CameraFeed />
+          <AiModelPanel />
           <RunComplete />
         </div>
       )}

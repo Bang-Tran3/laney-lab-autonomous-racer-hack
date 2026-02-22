@@ -1,0 +1,8 @@
+{
+  "model_version": "v0001",
+  "dataset_id": "dataset-20260222T054303Z",
+  "run_count": 0,
+  "frame_count": 0,
+  "status": "placeholder_trainer_output",
+  "note": "Replace this with actual PyTorch/ONNX training output in the next slice."
+}

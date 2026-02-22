@@ -1,0 +1,39 @@
+{
+  "status": "stubbed",
+  "interface": {
+    "type": "serial",
+    "port": null,
+    "baudrate": 115200,
+    "protocol": "serial-json-v1"
+  },
+  "steering": {
+    "units": "pwm_us_or_angle",
+    "center": null,
+    "min_left": null,
+    "max_right": null,
+    "inverted": false,
+    "deadband": null
+  },
+  "throttle": {
+    "units": "pwm_us_or_percent",
+    "neutral": null,
+    "forward_min": null,
+    "forward_max": null,
+    "reverse_enabled": false,
+    "reverse_min": null,
+    "reverse_max": null
+  },
+  "safety": {
+    "controller_watchdog_ms": null,
+    "neutral_on_boot": true,
+    "estop_available": null
+  },
+  "camera": {
+    "device": null,
+    "mount_notes": null,
+    "exposure_lock": null,
+    "white_balance_lock": null
+  },
+  "notes": []
+}
+

@@ -24,7 +24,7 @@ the sim-to-real domain gap so the model transfers cleanly to the physical vehicl
 
 **Training value:** The model learns basic lane-following from camera frames.
 
-**Status:** ✅ Complete — 3D tracks, car physics, HUD, minimap, AI demo mode.
+**Status:** COMPLETE — 3D tracks, car physics, HUD, minimap, AI demo mode.
 
 ---
 
@@ -206,10 +206,10 @@ generates more data across increasingly realistic environments.
 ## Summary
 
 ```
-Phase 1: Learn to drive          (closed tracks)        ✅ DONE
-Phase 2: Learn to decide         (branching tracks)     🔜 NEXT
-Phase 3: Learn to navigate       (open campus map)      📋 PLANNED
-Phase 4: Learn the real world    (photo-realistic sim)  🎯 GOAL
+Phase 1: Learn to drive          (closed tracks)        [DONE]
+Phase 2: Learn to decide         (branching tracks)     [NEXT]
+Phase 3: Learn to navigate       (open campus map)      [PLANNED]
+Phase 4: Learn the real world    (photo-realistic sim)  [GOAL]
 ```
 
 The end state: a model trained in a simulator that looks like the real lab,

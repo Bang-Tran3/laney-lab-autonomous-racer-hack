@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useGameStore } from '@/lib/stores/game-store';
 import { TRACKS } from '@/lib/tracks/track-data';
@@ -24,8 +24,7 @@ export function TrackSelect() {
 
   // Use persisted accumulated stats for unlock gating & header display
   // (Zustand lapCount resets per-run; localStorage totalLaps persists across sessions)
-  const [persistedStats, setPersistedStats] = useState<AccumulatedStats | null>(null);
-  useEffect(() => { setPersistedStats(getStats()); }, []);
+  const [persistedStats] = useState<AccumulatedStats>(() => getStats());
   const totalLaps = persistedStats?.totalLaps ?? 0;
 
   function initTrack(trackId: string) {
@@ -165,13 +164,9 @@ export function TrackSelect() {
 }
 
 function DataBar() {
-  const [stats, setStats] = useState<AccumulatedStats | null>(null);
+  const [stats] = useState<AccumulatedStats>(() => getStats());
 
-  useEffect(() => {
-    setStats(getStats());
-  }, []);
-
-  if (!stats || stats.totalRuns === 0) return null;
+  if (stats.totalRuns === 0) return null;
 
   return (
     <div className="bg-white/5 border border-gray-700 rounded-2xl px-5 py-3 flex items-center justify-between">

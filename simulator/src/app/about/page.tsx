@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { Bot, Brain, Camera, Car, ChevronRight, Gamepad2, Globe, Layers, Target, Users, Zap } from 'lucide-react';
 
@@ -132,10 +133,10 @@ export default function AboutPage() {
                 the map. It drives well but can&apos;t generalize to new environments.
               </p>
               <div className="text-xs text-gray-500 space-y-1">
-                <div>✓ Knows exact track shape</div>
-                <div>✓ Perfect path following</div>
-                <div>✗ Can&apos;t see — no camera input</div>
-                <div>✗ Useless on a new track or in the real world</div>
+                <div>[+] Knows exact track shape</div>
+                <div>[+] Perfect path following</div>
+                <div>[-] Can&apos;t see — no camera input</div>
+                <div>[-] Useless on a new track or in the real world</div>
               </div>
             </div>
             <div className="bg-blue-900/20 border border-blue-700/40 rounded-2xl p-6 space-y-3">
@@ -153,10 +154,10 @@ export default function AboutPage() {
                 and improve as the class drives more laps.
               </p>
               <div className="text-xs text-gray-500 space-y-1">
-                <div>✓ Learns from human demonstrations</div>
-                <div>✓ Generalizes to new situations</div>
-                <div>✓ Transfers to the physical car</div>
-                <div>✗ Needs lots of driving data to improve</div>
+                <div>[+] Learns from human demonstrations</div>
+                <div>[+] Generalizes to new situations</div>
+                <div>[+] Transfers to the physical car</div>
+                <div>[-] Needs lots of driving data to improve</div>
               </div>
             </div>
           </div>
@@ -284,36 +285,36 @@ export default function AboutPage() {
 }
 
 function ClassStats() {
-  // Read accumulated stats from localStorage
-  let totalLaps = 0;
-  let totalFrames = 0;
-  let totalRuns = 0;
-  if (typeof window !== 'undefined') {
+  const [totals] = useState(() => {
     try {
       const raw = localStorage.getItem('deepracer-training-runs');
-      if (raw) {
-        const runs = JSON.parse(raw) as Array<{ lapCount: number; frames: number }>;
-        totalRuns = runs.length;
-        for (const r of runs) {
-          totalLaps += r.lapCount;
-          totalFrames += r.frames;
-        }
+      if (!raw) return { totalRuns: 0, totalLaps: 0, totalFrames: 0 };
+      const runs = JSON.parse(raw) as Array<{ lapCount: number; frames: number }>;
+      const totalRuns = runs.length;
+      let totalLaps = 0;
+      let totalFrames = 0;
+      for (const r of runs) {
+        totalLaps += r.lapCount;
+        totalFrames += r.frames;
       }
-    } catch { /* ignore */ }
-  }
+      return { totalRuns, totalLaps, totalFrames };
+    } catch {
+      return { totalRuns: 0, totalLaps: 0, totalFrames: 0 };
+    }
+  });
 
   return (
     <div className="grid grid-cols-3 gap-4">
       <div className="bg-white/5 border border-gray-700 rounded-2xl p-6 text-center">
-        <div className="text-3xl font-bold text-blue-400">{totalRuns}</div>
+        <div className="text-3xl font-bold text-blue-400">{totals.totalRuns}</div>
         <div className="text-xs text-gray-400 mt-1">Training Runs</div>
       </div>
       <div className="bg-white/5 border border-gray-700 rounded-2xl p-6 text-center">
-        <div className="text-3xl font-bold text-green-400">{totalLaps}</div>
+        <div className="text-3xl font-bold text-green-400">{totals.totalLaps}</div>
         <div className="text-xs text-gray-400 mt-1">Total Laps</div>
       </div>
       <div className="bg-white/5 border border-gray-700 rounded-2xl p-6 text-center">
-        <div className="text-3xl font-bold text-purple-400">{totalFrames.toLocaleString()}</div>
+        <div className="text-3xl font-bold text-purple-400">{totals.totalFrames.toLocaleString()}</div>
         <div className="text-xs text-gray-400 mt-1">Data Frames</div>
       </div>
     </div>

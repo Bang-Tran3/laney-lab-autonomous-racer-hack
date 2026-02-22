@@ -18,16 +18,22 @@ export function KeyboardHandler() {
         return;
       }
 
-      // Space toggles pause in autonomous mode
+      // Space: toggles pause in autonomous mode, acts as brake key in manual
       if (e.key === ' ') {
         e.preventDefault();
-        if (store.mode === 'autonomous') store.setMode('auto-paused');
-        else if (store.mode === 'auto-paused') store.setMode('autonomous');
-        return;
+        if (store.mode === 'autonomous') { store.setMode('auto-paused'); return; }
+        if (store.mode === 'auto-paused') { store.setMode('autonomous'); return; }
+        // In manual mode, fall through so Car3D sees it as a key
       }
 
-      // Prevent arrow keys from scrolling
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      // Number keys 1-5: snap throttleTarget to preset levels
+      const presetMap: Record<string, number> = { '1': 0.2, '2': 0.4, '3': 0.6, '4': 0.8, '5': 1.0 };
+      if (presetMap[e.key] !== undefined && (store.mode === 'driving' || store.mode === 'paused')) {
+        store.updateCar({ throttleTarget: presetMap[e.key] });
+      }
+
+      // Prevent arrow keys and space from scrolling
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
         e.preventDefault();
       }
 

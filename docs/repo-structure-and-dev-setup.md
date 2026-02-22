@@ -2,6 +2,12 @@ Repo Structure & Dev Setup
 
 Virtual LfD Simulator + Model Training + Dashboards + Deployable Vehicle Target
 
+Current implementation note (Feb 2026):
+- The active simulator app currently lives in `simulator/` (Next.js).
+- Local training data telemetry is stored in `localStorage`.
+- Car POV image capture frames are stored in IndexedDB and can be exported as a zip (`frames/`, `controls.csv`, `run.json`) from the simulator UI/dashboard.
+- `services/api` and `services/trainer` are still planned and not yet present in this repo.
+
 
 
 1. Purpose

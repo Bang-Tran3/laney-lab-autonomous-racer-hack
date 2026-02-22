@@ -1,6 +1,7 @@
 'use client';
 
 import { useGameStore } from '@/lib/stores/game-store';
+import { useAiDriverStore } from '@/lib/inference/ai-driver-store';
 import { Play, Pause, Square, Bot } from 'lucide-react';
 
 /**
@@ -12,6 +13,10 @@ export function AutoControls() {
   const driveMode = useGameStore((s) => s.driveMode);
   const lapCount = useGameStore((s) => s.lapCount);
   const setMode = useGameStore((s) => s.setMode);
+  const aiStatus = useAiDriverStore((s) => s.status);
+  const aiControlSource = useAiDriverStore((s) => s.controlSource);
+  const activeModelVersion = useAiDriverStore((s) => s.activeModelVersion);
+  const loadedModelVersion = useAiDriverStore((s) => s.loadedModelVersion);
 
   if (driveMode !== 'ai') return null;
   if (mode !== 'autonomous' && mode !== 'auto-paused') return null;
@@ -92,7 +97,15 @@ export function AutoControls() {
         {/* Model label */}
         <div className="pl-4 border-l border-gray-600">
           <div className="text-[10px] text-gray-500 uppercase">Model</div>
-          <div className="text-xs text-gray-300 font-mono">demo-v0</div>
+          <div className="text-xs text-gray-300 font-mono">
+            {aiControlSource === 'model' && (loadedModelVersion || activeModelVersion)
+              ? (loadedModelVersion || activeModelVersion)
+              : aiStatus === 'loading'
+                ? 'loading...'
+                : activeModelVersion
+                  ? `${activeModelVersion}*`
+                  : 'demo-v0'}
+          </div>
         </div>
       </div>
     </div>

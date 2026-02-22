@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Deep Racer Simulator
 
-## Getting Started
+Next.js + React Three Fiber simulator for collecting local training data from manual driving and exporting camera/controls datasets.
 
-First, run the development server:
+## What Works
+
+- Manual driving (keyboard) and demo AI driving mode
+- Chase-camera 3D simulator + HUD + minimap
+- Telemetry capture (`steering`, `throttle`, `speed`, position) to local browser storage
+- Forward-facing AI camera capture (`160x120`) at ~10 FPS
+- AI camera PIP preview (top-right, toggleable)
+- Run export as `.zip` (`frames/`, `controls.csv`, `run.json`)
+- Dashboard exports for individual runs and all captured runs
+
+## Local Setup
+
+### Requirements
+- Node.js `>=20.9.0`
+
+### Install
+
+```bash
+npm install
+```
+
+### Run (dev)
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Build / checks
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run lint
+npm run build
+```
 
-## Learn More
+## Controls
 
-To learn more about Next.js, take a look at the following resources:
+- `Arrow keys` or `WASD`: drive/steer
+- `Space`: brake (manual) / pause-resume (AI mode)
+- `Esc`: pause/resume (manual mode)
+- `1-5`: snap throttle target presets
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Camera Capture + Export Workflow
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Start a manual run (or demo AI run)
+2. Drive laps while the AI camera preview records frames
+3. End the run (`Run Complete` screen)
+4. The simulator saves image frames to IndexedDB and telemetry metadata to localStorage
+5. Click `Download Run (.zip)` to export a training-ready bundle
 
-## Deploy on Vercel
+Zip contents:
+- `frames/*.jpg` (numbered 160x120 JPEGs)
+- `controls.csv` (`frame_idx,timestamp_ms,steering,throttle,speed`)
+- `run.json` (track/run metadata)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Dashboard
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Visit `http://localhost:3000/dashboard` to:
+- review runs and local stats
+- export JSON/CSV telemetry summaries
+- export per-run camera captures
+- export `All Runs .zip` for every run with saved image frames
+
+## Storage Notes
+
+- Telemetry run metadata is stored in `localStorage`
+- Camera frames are stored in IndexedDB (`deepracer-frame-capture`)
+- Clearing site data in the browser removes both
+
+## Current Scope / Next Steps
+
+This simulator currently implements local capture/export only. Backend API uploads, shared class datasets, model training, and ONNX inference are planned but not implemented yet.

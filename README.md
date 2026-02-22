@@ -23,6 +23,17 @@ The goal: make data collection feel like playing a game, not doing homework.
 
 ---
 
+## Current Status (Feb 2026)
+
+- Simulator manual driving + autonomous AI mode are implemented
+- Forward-facing AI camera capture + local run export are implemented
+- Shared Runs API is implemented and deployed (team data collection works)
+- Trainer worker is implemented and deployed (PyTorch training + ONNX export)
+- Simulator browser ONNX inference is implemented (active/pinned model selection, waypoint fallback)
+- Physical racer runtime service foundation exists (`services/vehicle-runtime`) with ONNX inference + safety loop in mock/OpenCV modes
+
+---
+
 ## How It Works
 
 ```
@@ -72,6 +83,7 @@ laney-lab-autonomous-racer-hack/
   services/
     api/                         # FastAPI — runs, models, training, metrics, tracks
     trainer/                     # Model training worker (PyTorch)
+    vehicle-runtime/             # Physical racer runtime (camera -> ONNX -> actuator control loop)
     metrics/                     # Per-run and aggregate metrics computation
     dashboard/                   # Analytics dashboard (Streamlit or integrated)
   sim/
@@ -105,7 +117,7 @@ Upstream forks are integrated via git submodules in `upstream/`.
 - Chase cam / cockpit cam toggle
 - Real-time steering via keyboard, gamepad, or touch
 - Speed gauge, lap timer, racing line overlay
-- Camera frame capture at ~10–15 FPS for training data
+- Camera frame capture at ~10 FPS for training data (implemented locally with zip export)
 
 ### 2D Top-Down Minimap
 - Always-visible canvas overlay
@@ -183,6 +195,9 @@ See [API & Contracts Spec](docs/api-and-contracts-spec.md) for full details.
 | [API & Contracts Spec](docs/api-and-contracts-spec.md) | Canonical interfaces for runs, models, training, metrics |
 | [Deployment & Hardware Spec](docs/deployment-and-hardware-spec.md) | Physical vehicle target, onboard hardware, sim-to-real parity |
 | [Repo Structure & Dev Setup](docs/repo-structure-and-dev-setup.md) | Monorepo layout, Docker compose, local dev setup |
+| [Implementation Status](docs/implementation-status.md) | Implemented features and remaining roadmap phases |
+| [Deploy Shared Runs API](docs/deploy-shared-runs-api.md) | Deploy the FastAPI runs backend so the team can collect shared data |
+| `services/vehicle-runtime/README.md` | Vehicle runtime service (physical racer runtime foundation) |
 | [Software Links](docs/software-links.md) | Upstream repos we fork/reference |
 | [Learning Outcomes](docs/learning-outcomes.md) | What students learn and can claim on resumes |
 
@@ -211,7 +226,7 @@ Managed via [ProjectMap](https://project-map.up.railway.app) with AI-powered tas
 | Milestone | Description | Status |
 |-----------|-------------|--------|
 | M0 | Docs + repo structure | Done |
-| M1 | 3D simulator with manual driving + data capture | In Progress |
+| M1 | 3D simulator with manual driving + local telemetry + camera capture export | Done |
 | M2 | Training pipeline: data → model → autonomous run | Planned |
 | M3 | Dashboard + metrics + leaderboard | Planned |
 | M4 | Gamification: XP, achievements, ghost racing | Planned |

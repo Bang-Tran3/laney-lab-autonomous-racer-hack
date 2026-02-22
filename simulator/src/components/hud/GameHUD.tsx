@@ -1,7 +1,8 @@
 'use client';
 
 import { useGameStore } from '@/lib/stores/game-store';
-import { Gauge, Timer, Trophy, Zap, AlertTriangle, Bot, Pause, Play, Square } from 'lucide-react';
+import { useAiDriverStore } from '@/lib/inference/ai-driver-store';
+import { Timer, Trophy, Zap, AlertTriangle, Bot } from 'lucide-react';
 
 function formatTime(ms: number): string {
   const totalSec = ms / 1000;
@@ -15,7 +16,6 @@ function formatTime(ms: number): string {
  * Heads-up display overlay — speed, lap time, lap count, XP, off-track warning.
  */
 export function GameHUD() {
-  const car = useGameStore((s) => s.car);
   const lapCount = useGameStore((s) => s.lapCount);
   const bestLapMs = useGameStore((s) => s.bestLapMs);
   const xp = useGameStore((s) => s.xp);
@@ -24,11 +24,12 @@ export function GameHUD() {
   const trackId = useGameStore((s) => s.trackId);
   const driveMode = useGameStore((s) => s.driveMode);
   const mode = useGameStore((s) => s.mode);
-  const setMode = useGameStore((s) => s.setMode);
+  const aiModelStatus = useAiDriverStore((s) => s.status);
+  const aiControlSource = useAiDriverStore((s) => s.controlSource);
+  const activeModelVersion = useAiDriverStore((s) => s.activeModelVersion);
+  const loadedModelVersion = useAiDriverStore((s) => s.loadedModelVersion);
 
   const isAI = driveMode === 'ai';
-  const speedKmh = Math.abs(car.speed * 3.6).toFixed(0);
-  const speedPct = Math.min(100, (Math.abs(car.speed) / 25) * 100);
 
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
@@ -61,6 +62,15 @@ export function GameHUD() {
                 <Bot className="w-4 h-4 text-purple-400" />
                 <span className="text-sm font-medium text-purple-300">AI Driving</span>
               </div>
+              <div className="mt-1 text-[11px] text-purple-200/90">
+                {aiControlSource === 'model' && (loadedModelVersion || activeModelVersion)
+                  ? `Model ${loadedModelVersion || activeModelVersion}`
+                  : aiModelStatus === 'loading'
+                    ? 'Loading model...'
+                    : activeModelVersion
+                      ? `Waypoint fallback (${activeModelVersion})`
+                      : 'Waypoint demo AI'}
+              </div>
             </div>
           )}
           <div className="bg-black/60 backdrop-blur-sm rounded-xl px-4 py-3 text-white">
@@ -83,27 +93,8 @@ export function GameHUD() {
         </div>
       )}
 
-      {/* Bottom bar — speedometer + lap timer */}
-      <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between">
-        {/* Speedometer */}
-        <div className="bg-black/60 backdrop-blur-sm rounded-xl px-4 py-3 text-white w-48">
-          <div className="flex items-center gap-2 mb-2">
-            <Gauge className="w-4 h-4 text-blue-400" />
-            <span className="text-2xl font-bold font-mono">{speedKmh}</span>
-            <span className="text-xs text-gray-400">km/h</span>
-          </div>
-          <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-100"
-              style={{
-                width: `${speedPct}%`,
-                backgroundColor: speedPct > 80 ? '#ef4444' : speedPct > 50 ? '#f59e0b' : '#3b82f6',
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Lap timer */}
+      {/* Bottom-right — lap timer */}
+      <div className="absolute bottom-4 right-4">
         <div className="bg-black/60 backdrop-blur-sm rounded-xl px-4 py-3 text-white">
           <div className="flex items-center gap-2">
             <Timer className="w-4 h-4 text-gray-400" />
@@ -112,12 +103,29 @@ export function GameHUD() {
         </div>
       </div>
 
-      {/* Controls hint — only for manual mode, top-right area below XP */}
-      {!isAI && mode === 'driving' && (
-        <div className="absolute bottom-20 right-4 bg-black/40 backdrop-blur-sm rounded-xl px-3 py-2 text-white text-xs space-y-0.5">
-          <div><kbd className="bg-gray-700 px-1 py-0.5 rounded text-[9px]">W</kbd> / <kbd className="bg-gray-700 px-1 py-0.5 rounded text-[9px]">↑</kbd> Gas</div>
-          <div><kbd className="bg-gray-700 px-1 py-0.5 rounded text-[9px]">S</kbd> / <kbd className="bg-gray-700 px-1 py-0.5 rounded text-[9px]">↓</kbd> Brake</div>
-          <div><kbd className="bg-gray-700 px-1 py-0.5 rounded text-[9px]">A D</kbd> / <kbd className="bg-gray-700 px-1 py-0.5 rounded text-[9px]">← →</kbd> Steer</div>
+      {/* Controls hint — bottom-left, prominent */}
+      {!isAI && (mode === 'driving' || mode === 'paused') && (
+        <div className="absolute bottom-4 left-14 bg-black/70 backdrop-blur-sm rounded-2xl border border-gray-700/50 px-4 py-3 text-white text-xs space-y-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-gray-500 font-medium mb-1">Controls</div>
+          <div className="flex items-center gap-2">
+            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-[10px] font-mono min-w-[28px] text-center">W</kbd>
+            <span className="text-gray-300">Gas</span>
+            <span className="text-gray-600 mx-1">·</span>
+            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-[10px] font-mono min-w-[28px] text-center">S</kbd>
+            <span className="text-gray-300">Brake</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-[10px] font-mono min-w-[28px] text-center">A</kbd>
+            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-[10px] font-mono min-w-[28px] text-center">D</kbd>
+            <span className="text-gray-300">Steer</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-[10px] font-mono min-w-[28px] text-center">1-5</kbd>
+            <span className="text-gray-300">Throttle</span>
+            <span className="text-gray-600 mx-1">·</span>
+            <kbd className="bg-gray-700 px-1.5 py-0.5 rounded text-[10px] font-mono min-w-[28px] text-center">␣</kbd>
+            <span className="text-gray-300">Brake</span>
+          </div>
         </div>
       )}
     </div>
