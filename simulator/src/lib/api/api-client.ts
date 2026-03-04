@@ -29,6 +29,37 @@ export interface FinalizeRunRequestPayload {
   best_lap_ms?: number | null;
 }
 
+export interface RunRecordPayload {
+  run_id: string;
+  user_id: string;
+  track_id: string;
+  mode: 'manual' | 'autonomous';
+  model_version: string | null;
+  sim_build: string;
+  client_build: string;
+  notes: string | null;
+  local_run_id: string | null;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_s: number | null;
+  frame_count: number;
+  lap_count: number;
+  off_track_count: number;
+  best_lap_ms: number | null;
+  artifacts: {
+    frames_uri: string | null;
+    controls_uri: string | null;
+    run_json_uri: string | null;
+  };
+  created_at: string;
+}
+
+export interface ListRunsResponsePayload {
+  items: RunRecordPayload[];
+  next_cursor: string | null;
+}
+
 export interface ModelRecordPayload {
   model_id: string;
   model_version: string;
@@ -114,6 +145,13 @@ export async function listTrainingJobs(limit = 20): Promise<TrainingJobRecordPay
   const base = getApiBaseUrl();
   if (!base) return [];
   const payload = await requestJson<ListTrainingJobsResponsePayload>(`${base}/api/train/jobs?limit=${limit}`);
+  return payload.items;
+}
+
+export async function listRemoteRuns(limit = 20): Promise<RunRecordPayload[]> {
+  const base = getApiBaseUrl();
+  if (!base) return [];
+  const payload = await requestJson<ListRunsResponsePayload>(`${base}/api/runs?limit=${limit}`);
   return payload.items;
 }
 

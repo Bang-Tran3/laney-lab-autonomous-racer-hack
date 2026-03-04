@@ -13,12 +13,15 @@ import {
   createTrainingJob,
   fetchActiveModelVersion,
   isApiConfigured,
+  listRemoteRuns,
   listModels as fetchRemoteModels,
   listTrainingJobs as fetchRemoteTrainingJobs,
   setActiveModelVersion as setRemoteActiveModelVersion,
   type ModelRecordPayload,
+  type RunRecordPayload,
   type TrainingJobRecordPayload,
 } from '@/lib/api/api-client';
+import { listRunSyncQueue, type RunSyncEntry } from '@/lib/api/run-sync-queue';
 import { LapTimeChart } from '@/components/dashboard/LapTimeChart';
 import { SpeedDistribution } from '@/components/dashboard/SpeedDistribution';
 import { TrackCoverage } from '@/components/dashboard/TrackCoverage';
@@ -42,6 +45,7 @@ export default function DashboardPage() {
   const [exportingCaptureZip, setExportingCaptureZip] = useState(false);
   const [remoteModels, setRemoteModels] = useState<ModelRecordPayload[]>([]);
   const [remoteJobs, setRemoteJobs] = useState<TrainingJobRecordPayload[]>([]);
+  const [remoteRuns, setRemoteRuns] = useState<RunRecordPayload[]>([]);
   const [activeRemoteModel, setActiveRemoteModel] = useState<string | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState<string | null>(null);
@@ -51,6 +55,7 @@ export default function DashboardPage() {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem('dashboard-help-dismissed') !== 'true';
   });
+  const [localSyncEntries, setLocalSyncEntries] = useState<RunSyncEntry[]>([]);
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -74,14 +79,16 @@ export default function DashboardPage() {
     setRemoteLoading(true);
     setRemoteError(null);
     try {
-      const [models, jobs, active] = await Promise.all([
+      const [models, jobs, active, recentRuns] = await Promise.all([
         fetchRemoteModels(20),
         fetchRemoteTrainingJobs(20),
         fetchActiveModelVersion(),
+        listRemoteRuns(12),
       ]);
       setRemoteModels(models);
       setRemoteJobs(jobs);
       setActiveRemoteModel(active);
+      setRemoteRuns(recentRuns);
     } catch (error) {
       console.error(error);
       setRemoteError(error instanceof Error ? error.message : String(error));
@@ -93,6 +100,20 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!isApiConfigured()) return;
     void refreshCloudData();
+  }, []);
+
+  useEffect(() => {
+    const refreshLocalSync = () => setLocalSyncEntries(listRunSyncQueue());
+    refreshLocalSync();
+    const timer = window.setInterval(refreshLocalSync, 2000);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'deepracer-run-sync-queue') refreshLocalSync();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   function handleExport(format: 'json' | 'csv') {
@@ -305,7 +326,7 @@ export default function DashboardPage() {
           {/* Progress bar toward next milestone */}
           {runs.length > 0 && (
             <div className="mt-4 pt-4 border-t border-gray-800/50">
-              <ProgressMilestone totalRuns={runs.length} totalLaps={totalLaps} totalFrames={totalFrames} />
+              <ProgressMilestone totalRuns={runs.length} />
             </div>
           )}
         </div>
@@ -355,7 +376,9 @@ export default function DashboardPage() {
                   apiConfigured={isApiConfigured()}
                   models={remoteModels}
                   jobs={remoteJobs}
+                  runs={remoteRuns}
                   activeModelVersion={activeRemoteModel}
+                  localSyncEntries={localSyncEntries}
                   loading={remoteLoading}
                   error={remoteError}
                   creatingJob={creatingJob}
@@ -368,7 +391,7 @@ export default function DashboardPage() {
                     setCreatingJob(true);
                     try {
                       await createTrainingJob({
-                        dataset: { manual_only: true, max_runs: 200 },
+                        dataset: { manual_only: true },
                         hyperparams: { epochs: 3, batch_size: 32, learning_rate: 0.0003 },
                         export: { set_active: true },
                       });
@@ -512,7 +535,9 @@ function CloudTab({
   apiConfigured,
   models,
   jobs,
+  runs,
   activeModelVersion,
+  localSyncEntries,
   loading,
   error,
   creatingJob,
@@ -523,7 +548,9 @@ function CloudTab({
   apiConfigured: boolean;
   models: ModelRecordPayload[];
   jobs: TrainingJobRecordPayload[];
+  runs: RunRecordPayload[];
   activeModelVersion: string | null;
+  localSyncEntries: RunSyncEntry[];
   loading: boolean;
   error: string | null;
   creatingJob: boolean;
@@ -533,6 +560,12 @@ function CloudTab({
 }) {
   const [busyActiveVersion, setBusyActiveVersion] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const syncCounts = {
+    total: localSyncEntries.length,
+    synced: localSyncEntries.filter((e) => e.status === 'synced').length,
+    pending: localSyncEntries.filter((e) => e.status === 'pending' || e.status === 'syncing').length,
+    error: localSyncEntries.filter((e) => e.status === 'error').length,
+  };
 
   if (!apiConfigured) {
     return (
@@ -711,12 +744,86 @@ function CloudTab({
           </div>
         </div>
       </div>
+
+      <div className="grid lg:grid-cols-3 gap-6">
+        <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <Cloud className="w-4 h-4 text-cyan-400" />
+            <h4 className="text-sm font-semibold text-gray-200">Sync Verification</h4>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-xl border border-gray-800 bg-gray-950/20 p-3">
+              <div className="text-gray-500">Local Queue</div>
+              <div className="mt-1 text-lg font-bold text-white">{syncCounts.total}</div>
+            </div>
+            <div className="rounded-xl border border-green-900/30 bg-green-950/10 p-3">
+              <div className="text-green-300/80">Synced</div>
+              <div className="mt-1 text-lg font-bold text-green-300">{syncCounts.synced}</div>
+            </div>
+            <div className="rounded-xl border border-yellow-900/30 bg-yellow-950/10 p-3">
+              <div className="text-yellow-300/80">Pending</div>
+              <div className="mt-1 text-lg font-bold text-yellow-300">{syncCounts.pending}</div>
+            </div>
+            <div className="rounded-xl border border-red-900/30 bg-red-950/10 p-3">
+              <div className="text-red-300/80">Errors</div>
+              <div className="mt-1 text-lg font-bold text-red-300">{syncCounts.error}</div>
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-500">
+            Counts above are for this browser&apos;s background sync queue. Check the cloud runs table for team-wide uploads.
+          </p>
+        </div>
+
+        <div className="lg:col-span-2 bg-gray-900/50 border border-gray-800 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-gray-200">Recent Synced Runs (Cloud)</h4>
+            <div className="text-xs text-gray-500">{runs.length} shown</div>
+          </div>
+          <div className="overflow-x-auto max-h-[340px] overflow-y-auto">
+            {runs.length === 0 ? (
+              <div className="text-center py-8">
+                <Cloud className="w-8 h-8 text-gray-700 mx-auto mb-2" />
+                <p className="text-xs text-gray-500">No shared runs found yet. Drive laps, then refresh after sync completes.</p>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-gray-900">
+                  <tr className="text-xs text-gray-500 uppercase tracking-wider border-b border-gray-800">
+                    <th className="text-left py-2 pr-3">Created</th>
+                    <th className="text-left py-2 pr-3">User</th>
+                    <th className="text-left py-2 pr-3">Track</th>
+                    <th className="text-left py-2 pr-3">Mode</th>
+                    <th className="text-right py-2 pr-3">Laps</th>
+                    <th className="text-right py-2">Frames</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r) => (
+                    <tr key={r.run_id} className="border-b border-gray-800/40 hover:bg-gray-800/20">
+                      <td className="py-2.5 pr-3 text-xs text-gray-400">{new Date(r.created_at).toLocaleString()}</td>
+                      <td className="py-2.5 pr-3 font-mono text-xs text-gray-300">{r.user_id}</td>
+                      <td className="py-2.5 pr-3 text-gray-300 capitalize">{r.track_id.replace('-', ' ')}</td>
+                      <td className="py-2.5 pr-3">
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] ${r.mode === 'manual' ? 'bg-blue-900/20 text-blue-300' : 'bg-purple-900/20 text-purple-300'}`}>
+                          {r.mode}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-3 text-right text-gray-200">{r.lap_count}</td>
+                      <td className="py-2.5 text-right text-gray-200">{r.frame_count.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
 /* ─── Progress Milestone ─── */
-function ProgressMilestone({ totalRuns, totalLaps, totalFrames }: { totalRuns: number; totalLaps: number; totalFrames: number }) {
+function ProgressMilestone({ totalRuns }: { totalRuns: number }) {
   // Define milestones
   const milestones = [
     { label: 'First training', target: 10, unit: 'runs', current: totalRuns },
@@ -772,14 +879,4 @@ function EmptyState() {
       </Link>
     </div>
   );
-}
-
-function formatDuration(ms: number): string {
-  if (!ms) return '0s';
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ${sec % 60}s`;
-  const hr = Math.floor(min / 60);
-  return `${hr}h ${min % 60}m`;
 }

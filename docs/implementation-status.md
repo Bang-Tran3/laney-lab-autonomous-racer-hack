@@ -142,3 +142,4 @@ This replaces the old implementation planning doc with an implementation/status 
 - The deleted `docs/implementation-plan.md` described the full multi-phase roadmap.
 - Phase D is substantially implemented for simulator use (active/pinned model inference + fallback + A/B toggle).
 - Physical racer runtime foundation now exists, but hardware-specific integration and safety subsystems are still pending.
+- Photo-based environment planning for lab/quad sim-to-real work is documented in `docs/lab-and-quad-photo-sim-plan.md`.

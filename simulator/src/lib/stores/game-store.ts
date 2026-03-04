@@ -41,12 +41,16 @@ interface GameState {
   aiModelSelectionMode: 'active' | 'pinned';
   aiPinnedModelVersion: string | null;
   aiSteeringMode: 'learned' | 'waypoint';
+  labRandomizationEnabled: boolean;
+  trackVisualSeed: number;
   setTrackId: (id: string) => void;
   setMode: (mode: GameState['mode']) => void;
   setDriveMode: (dm: GameState['driveMode']) => void;
   setAiModelSelectionMode: (mode: 'active' | 'pinned') => void;
   setAiPinnedModelVersion: (version: string | null) => void;
   setAiSteeringMode: (mode: 'learned' | 'waypoint') => void;
+  setLabRandomizationEnabled: (enabled: boolean) => void;
+  setTrackVisualSeed: (seed: number) => void;
 
   // Car
   car: CarState;
@@ -97,6 +101,12 @@ function loadSavedStats() {
   };
 }
 
+function loadLabRandomizationEnabled() {
+  if (typeof window === 'undefined') return true;
+  const raw = localStorage.getItem('deepracer-lab-randomization');
+  return raw == null ? true : raw === 'true';
+}
+
 const saved = loadSavedStats();
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -106,12 +116,21 @@ export const useGameStore = create<GameState>((set, get) => ({
   aiModelSelectionMode: 'active',
   aiPinnedModelVersion: null,
   aiSteeringMode: 'learned',
+  labRandomizationEnabled: loadLabRandomizationEnabled(),
+  trackVisualSeed: 0,
   setTrackId: (id) => set({ trackId: id }),
   setMode: (mode) => set({ mode }),
   setDriveMode: (dm) => set({ driveMode: dm }),
   setAiModelSelectionMode: (aiModelSelectionMode) => set({ aiModelSelectionMode }),
   setAiPinnedModelVersion: (aiPinnedModelVersion) => set({ aiPinnedModelVersion }),
   setAiSteeringMode: (aiSteeringMode) => set({ aiSteeringMode }),
+  setLabRandomizationEnabled: (labRandomizationEnabled) => {
+    set({ labRandomizationEnabled });
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('deepracer-lab-randomization', String(labRandomizationEnabled));
+    }
+  },
+  setTrackVisualSeed: (trackVisualSeed) => set({ trackVisualSeed }),
 
   car: { x: 30, z: 0, rotation: Math.PI / 2, speed: 0, steering: 0, throttle: 0, steerTarget: 0, throttleTarget: 0 },
   updateCar: (partial) => set((s) => ({ car: { ...s.car, ...partial } })),

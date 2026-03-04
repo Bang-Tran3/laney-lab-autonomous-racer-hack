@@ -197,6 +197,7 @@ See [API & Contracts Spec](docs/api-and-contracts-spec.md) for full details.
 | [Repo Structure & Dev Setup](docs/repo-structure-and-dev-setup.md) | Monorepo layout, Docker compose, local dev setup |
 | [Implementation Status](docs/implementation-status.md) | Implemented features and remaining roadmap phases |
 | [Deploy Shared Runs API](docs/deploy-shared-runs-api.md) | Deploy the FastAPI runs backend so the team can collect shared data |
+| [Lab & Quad Photo-Sim Plan](docs/lab-and-quad-photo-sim-plan.md) | Photo capture + simulator environment plan for lab/quad sim-to-real work |
 | `services/vehicle-runtime/README.md` | Vehicle runtime service (physical racer runtime foundation) |
 | [Software Links](docs/software-links.md) | Upstream repos we fork/reference |
 | [Learning Outcomes](docs/learning-outcomes.md) | What students learn and can claim on resumes |

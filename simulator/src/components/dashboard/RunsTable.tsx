@@ -4,14 +4,6 @@ import { useState, useMemo } from 'react';
 import { AlertTriangle, Trash2, CheckSquare, Square, Download } from 'lucide-react';
 import { flagAnomalies, type TrainingRun, type FlaggedRun } from '@/lib/data/training-data';
 
-function formatDur(ms: number): string {
-  const sec = ms / 1000;
-  if (sec < 60) return `${sec.toFixed(1)}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ${Math.floor(sec % 60)}s`;
-  return `${Math.floor(min / 60)}h ${min % 60}m`;
-}
-
 /**
  * Compact table of all training runs with anomaly flags,
  * row selection checkboxes, and batch delete.

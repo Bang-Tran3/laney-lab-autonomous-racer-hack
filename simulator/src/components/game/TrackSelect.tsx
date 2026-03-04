@@ -15,12 +15,21 @@ const difficultyColors: Record<string, string> = {
   special: 'text-purple-400 bg-purple-400/10 border-purple-400/30',
 };
 
+let trackVisualSeedCounter = 1;
+function nextTrackVisualSeed(): number {
+  trackVisualSeedCounter = (trackVisualSeedCounter + 1) & 0x7fffffff;
+  if (trackVisualSeedCounter === 0) trackVisualSeedCounter = 1;
+  return trackVisualSeedCounter;
+}
+
 /**
  * Track selection menu — shown before driving.
  */
 export function TrackSelect() {
   const setTrackId = useGameStore((s) => s.setTrackId);
   const setMode = useGameStore((s) => s.setMode);
+  const labRandomizationEnabled = useGameStore((s) => s.labRandomizationEnabled);
+  const setLabRandomizationEnabled = useGameStore((s) => s.setLabRandomizationEnabled);
 
   // Use persisted accumulated stats for unlock gating & header display
   // (Zustand lapCount resets per-run; localStorage totalLaps persists across sessions)
@@ -32,6 +41,10 @@ export function TrackSelect() {
     useGameStore.getState().resetLaps();
     useGameStore.getState().clearControlLog();
     const track = TRACKS.find((t) => t.id === trackId)!;
+    const visualSeed = (track.environment === 'lab' && labRandomizationEnabled)
+      ? nextTrackVisualSeed()
+      : 0;
+    useGameStore.getState().setTrackVisualSeed(visualSeed);
     useGameStore.getState().updateCar({
       x: track.spawnPos[0],
       z: track.spawnPos[2],
@@ -79,6 +92,21 @@ export function TrackSelect() {
             <span className="font-bold">{totalLaps}</span>
             <span className="text-gray-400">Total Laps</span>
           </div>
+        </div>
+
+        {/* Lab randomization toggle */}
+        <div className="flex items-center justify-center">
+          <button
+            onClick={() => setLabRandomizationEnabled(!labRandomizationEnabled)}
+            className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+              labRandomizationEnabled
+                ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-300'
+                : 'border-gray-700 bg-white/5 text-gray-400'
+            }`}
+            title="Slightly randomize chair/table positions each run on classroom lab tracks"
+          >
+            Classroom Layout Randomization: {labRandomizationEnabled ? 'On' : 'Off'}
+          </button>
         </div>
 
         {/* Track cards */}
