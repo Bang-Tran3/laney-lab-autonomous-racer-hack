@@ -113,6 +113,58 @@ def reload_model() -> ActionResponse:
     return ActionResponse(ok=True, message="model reload triggered")
 
 
+@app.post("/model/push")
+async def push_model(file: UploadFile, model_id: str = "", display_name: str = "", format: str = ""):
+    """
+    Accept a model file upload from a remote dashboard over WiFi.
+    Writes the file to the .active-model/ directory and triggers a reload.
+    This enables wireless model switching without needing SSH or a shared filesystem.
+    """
+    from pathlib import Path
+    import shutil
+
+    deploy_dir = Path(".active-model")
+    deploy_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clear previous deployment
+    for item in deploy_dir.iterdir():
+        if item.name != "active_model_marker.json":
+            item.unlink(missing_ok=True)
+
+    # Write the uploaded model file
+    dest = deploy_dir / file.filename
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # Write marker so the runtime knows what was deployed
+    from datetime import datetime, timezone
+    marker = {
+        "model_id": model_id,
+        "display_name": display_name,
+        "format": format,
+        "filename": file.filename,
+        "deployed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "pushed_over_wifi": True,
+    }
+    (deploy_dir / "active_model_marker.json").write_text(
+        json.dumps(marker, indent=2) + "\n", encoding="utf-8"
+    )
+
+    # Trigger reload immediately
+    app.state.runtime.reload_model()
+    return {"ok": True, "filename": file.filename, "size_bytes": dest.stat().st_size}
+
+
+@app.get("/model/active")
+def get_active_model():
+    """Return the currently deployed model info from the marker file."""
+    from pathlib import Path
+    marker_path = Path(".active-model") / "active_model_marker.json"
+    if not marker_path.exists():
+        return {"model_id": None, "message": "No model deployed"}
+    return json.loads(marker_path.read_text(encoding="utf-8"))
+
+
 @app.post("/session/start", response_model=ActionResponse)
 def session_start() -> ActionResponse:
     session_id = app.state.runtime.start_session()
