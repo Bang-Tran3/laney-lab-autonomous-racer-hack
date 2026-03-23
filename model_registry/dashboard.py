@@ -4,7 +4,8 @@ Model Registry Dashboard -- Streamlit UI for browsing, switching, and comparing 
 Run:
     streamlit run model_registry/dashboard.py
 """
-from __future__ import json
+from __future__ import annotations
+import json
 import logging
 import math
 import os
