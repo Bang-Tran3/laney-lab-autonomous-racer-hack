@@ -258,8 +258,8 @@ else:
 # Main content -- Tabs
 # ---------------------------------------------------------------------------
 
-tab_details, tab_compare, tab_explorer, tab_history, tab_all = st.tabs([
-    "Model Details", "Performance Comparison", "Explorer Controls", "Switch History", "All Models"
+tab_details, tab_compare, tab_premap, tab_explorer, tab_history, tab_all = st.tabs([
+    "Model Details", "Performance Comparison", "Pre-Mapping", "Explorer Controls", "Switch History", "All Models"
 ])
 
 # ---------------------------------------------------------------------------
@@ -419,6 +419,237 @@ with tab_compare:
                 cols[0].markdown(f"**{s['display_name']}**")
                 for i, (status, count) in enumerate(rates.items()):
                     cols[i + 1].metric(status.title(), count)
+
+# ---------------------------------------------------------------------------
+# Tab: Pre-Mapping
+# ---------------------------------------------------------------------------
+with tab_premap:
+    st.header("Area Pre-Mapping")
+    st.caption(
+        "Help the racer understand the area before exploration. "
+        "Upload photos and annotate obstacles, free zones, and points of interest."
+    )
+    
+    # Check pre-mapping status
+    try:
+        req = urllib.request.Request(f"{VEHICLE_RUNTIME_URL}/explorer/premap/status", method="GET")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            premap_status = json.loads(resp.read().decode())
+    except Exception:
+        premap_status = {"has_premap": False, "photos": []}
+    
+    # Initialize or load pre-mapping session
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("Photo Upload")
+        
+        uploaded_file = st.file_uploader(
+            "Upload a photo of the area",
+            type=['jpg', 'jpeg', 'png'],
+            help="Take photos from different angles to create a complete map"
+        )
+        
+        if uploaded_file:
+            # Position inputs
+            pos_col1, pos_col2, pos_col3 = st.columns(3)
+            with pos_col1:
+                pos_x = st.number_input("X Position (ft)", value=0.0, step=1.0)
+            with pos_col2:
+                pos_y = st.number_input("Y Position (ft)", value=0.0, step=1.0)
+            with pos_col3:
+                heading = st.number_input("Heading (degrees)", value=0.0, step=15.0)
+            
+            if st.button("Upload Photo", type="primary"):
+                files = {"file": uploaded_file.getvalue()}
+                # Note: Streamlit doesn't support multipart form upload directly
+                # This would need a custom component or different approach
+                st.info("Photo upload requires API integration. See documentation for manual upload.")
+        
+        st.markdown("---")
+        st.subheader("Photo Guidelines")
+        st.markdown("""
+        **For best results:**
+        - Take photos from different angles (every 45-90 degrees)
+        - Keep consistent height (about 2-3 feet from ground)
+        - Overlap photos by 30-50%
+        - Include reference points in multiple photos
+        - Good lighting helps with obstacle detection
+        """)
+    
+    with col2:
+        st.subheader("Session Status")
+        
+        if premap_status.get("has_premap"):
+            st.success(f"Active Session")
+            st.metric("Photos", premap_status.get("num_photos", 0))
+            
+            if premap_status.get("has_composite"):
+                st.success("Composite Map Ready")
+            else:
+                st.info("No Composite Map")
+            
+            if premap_status.get("has_prior"):
+                st.success("Prior Map Generated")
+            else:
+                st.info("No Prior Map")
+            
+            # Show photos list
+            if premap_status.get("photos"):
+                st.markdown("**Uploaded Photos:**")
+                for photo in premap_status["photos"][:5]:
+                    st.markdown(f"• {photo['filename']} ({photo['num_annotations']} annotations)")
+        else:
+            st.info("No active pre-mapping session")
+            
+            if st.button("Start New Session"):
+                try:
+                    req = urllib.request.Request(
+                        f"{VEHICLE_RUNTIME_URL}/explorer/premap/load",
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req, timeout=3) as resp:
+                        result = json.loads(resp.read().decode())
+                        if result.get("success"):
+                            st.success("Session started")
+                            st.rerun()
+                except Exception:
+                    st.error("Failed to start session")
+    
+    # Show composite map if available
+    if premap_status.get("has_composite"):
+        st.markdown("---")
+        st.subheader("Composite Map")
+        try:
+            req = urllib.request.Request(f"{VEHICLE_RUNTIME_URL}/explorer/premap/composite", method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                img_data = resp.read()
+                st.image(img_data, caption="Stitched photo composite", use_container_width=True)
+        except Exception:
+            st.error("Failed to load composite map")
+    
+    # Annotation tools
+    if premap_status.get("photos"):
+        st.markdown("---")
+        st.subheader("Annotation Tools")
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.markdown("**Quick Labels:**")
+            if st.button("Mark as Obstacle"):
+                st.info("Click on the photo to mark obstacles")
+            if st.button("Mark as Free Space"):
+                st.info("Click on the photo to mark free areas")
+            if st.button("Mark as Wall"):
+                st.info("Click to mark walls/barriers")
+        
+        with col2:
+            st.markdown("**Special Features:**")
+            if st.button("Mark Door/Entrance"):
+                st.info("Mark potential entrances")
+            if st.button("Mark Hazard"):
+                st.info("Mark dangerous areas")
+            if st.button("Add Note"):
+                st.info("Add custom notes to areas")
+        
+        st.markdown("---")
+        st.subheader("Processing")
+        
+        proc_col1, proc_col2, proc_col3 = st.columns(3)
+        
+        with proc_col1:
+            if st.button("🧵 Stitch Photos"):
+                try:
+                    req = urllib.request.Request(
+                        f"{VEHICLE_RUNTIME_URL}/explorer/premap/stitch",
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        result = json.loads(resp.read().decode())
+                        if result.get("success"):
+                            st.success(result.get("message"))
+                        else:
+                            st.error(result.get("error"))
+                except Exception:
+                    st.error("Stitching failed")
+        
+        with proc_col2:
+            if st.button("🗺️ Create Prior Map"):
+                try:
+                    req = urllib.request.Request(
+                        f"{VEHICLE_RUNTIME_URL}/explorer/premap/prior",
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        result = json.loads(resp.read().decode())
+                        if result.get("success"):
+                            st.success(result.get("message"))
+                        else:
+                            st.error(result.get("error"))
+                except Exception:
+                    st.error("Failed to create prior map")
+        
+        with proc_col3:
+            if st.button("💾 Save Session"):
+                try:
+                    req = urllib.request.Request(
+                        f"{VEHICLE_RUNTIME_URL}/explorer/premap/save",
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req, timeout=3) as resp:
+                        result = json.loads(resp.read().decode())
+                        if result.get("success"):
+                            st.success("Session saved")
+                        else:
+                            st.error(result.get("error"))
+                except Exception:
+                    st.error("Save failed")
+    
+    # Exploration hints
+    if premap_status.get("hints"):
+        st.markdown("---")
+        st.subheader("Exploration Hints")
+        st.caption("Based on your annotations, here are areas the racer should prioritize:")
+        
+        for hint in premap_status["hints"][:5]:
+            icon = {"avoid": "🚫", "explore": "✅", "investigate": "🔍"}.get(hint.get("type"), "📍")
+            priority_color = {
+                "high": "red",
+                "medium": "orange", 
+                "low": "green"
+            }.get(hint.get("priority"), "gray")
+            
+            st.markdown(f"{icon} **{hint.get('type', 'unknown').title()}** at ({hint.get('position', [0, 0])[0]:.1f}, {hint.get('position', [0, 0])[1]:.1f})")
+            st.caption(f"_{hint.get('reason', 'No reason')}_")
+            st.markdown(f":{priority_color}[Priority: {hint.get('priority', 'unknown')}]")
+            st.markdown("---")
+    
+    # Mobile app instructions
+    with st.expander("📱 Mobile App Instructions", expanded=False):
+        st.markdown("""
+        **Using the Mobile App for Pre-Mapping:**
+        
+        1. **Download the app** from the app store (coming soon)
+        2. **Connect to the racer's WiFi** network
+        3. **Walk around the area** and take photos:
+           - Hold phone at waist height (2-3 ft from ground)
+           - Take a photo every 10-15 steps
+           - Turn 45 degrees after each photo
+           - Get 360° coverage of the area
+        4. **Tap to annotate** directly on photos:
+           - Red = Obstacles (chairs, walls, equipment)
+           - Green = Free space (clear paths)
+           - Blue = Special areas (doors, ramps, hazards)
+        5. **Review and submit** - the app will stitch photos and create the prior map
+        6. **Start exploration** - the racer will use your annotated map
+        
+        **Tips:**
+        - Good lighting makes obstacle detection easier
+        - Include floor patterns in multiple photos for better stitching
+        - Mark temporary obstacles with lower confidence
+        - Add notes for anything unusual (e.g., "wet floor", "loose cable")
+        """)
 
 # ---------------------------------------------------------------------------
 # Tab: Explorer Controls

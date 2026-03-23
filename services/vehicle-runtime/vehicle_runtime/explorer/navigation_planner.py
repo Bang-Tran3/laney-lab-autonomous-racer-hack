@@ -285,12 +285,34 @@ class NavigationPlanner:
         if self._frontier_target is not None and elapsed < 3.0:
             return  # reuse existing target for a few seconds
 
-        # First, check if there are low-confidence areas to revisit
+        # First, check if there are pre-mapping hints to follow
+        if hasattr(self, '_premap_hints') and self._premap_hints:
+            import math
+            # Prioritize high-priority hints
+            high_priority_hints = [h for h in self._premap_hints if h.get("priority") == "high"]
+            if high_priority_hints:
+                # Find nearest high-priority hint
+                nearest_hint = None
+                nearest_dist = float('inf')
+                
+                for hint in high_priority_hints:
+                    pos = hint.get("position", (0, 0))
+                    dist = math.sqrt((pos[0] - odom.x)**2 + (pos[1] - odom.y)**2)
+                    if dist < nearest_dist:
+                        nearest_dist = dist
+                        nearest_hint = pos
+                
+                if nearest_hint and nearest_dist < 40.0:  # 40 feet max for pre-mapping hints
+                    self._frontier_target = nearest_hint
+                    self._frontier_check_time = time.time()
+                    log.debug("Targeting pre-mapping hint at (%.1f, %.1f)", *nearest_hint)
+                    return
+        
+        # Then check if there are low-confidence areas to revisit
         low_conf_areas = self.world_map.get_low_confidence_areas(max_results=5)  # type: ignore[union-attr]
         
         if low_conf_areas:
             # Pick the nearest low-confidence area
-            import math
             nearest_area = None
             nearest_dist = float('inf')
             

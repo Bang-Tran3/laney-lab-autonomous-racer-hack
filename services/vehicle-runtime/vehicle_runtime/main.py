@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from fastapi.responses import Response, StreamingResponse
 import json
+import cv2
+import numpy as np
 
 from vehicle_runtime.config import load_config
 from vehicle_runtime.runtime import VehicleRuntime
@@ -322,3 +324,214 @@ def explorer_reexplore_areas(max_results: int = 10):
         return {"areas": [{"x": x, "y": y, "confidence": conf} for x, y, conf in areas]}
     except Exception:
         return {"areas": []}
+
+
+# ---------------------------------------------------------------------------
+# Pre-mapping API endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/explorer/premap/photo")
+def explorer_premap_add_photo(file: UploadFile, position_x: float = 0.0, position_y: float = 0.0, heading: float = 0.0):
+    """Upload a photo for pre-mapping."""
+    if not hasattr(app.state.runtime, "explorer") or not app.state.runtime.explorer:
+        return {"error": "Explorer not initialized"}
+    
+    try:
+        from .explorer.premapper import Premapper
+        from pathlib import Path
+        
+        # Create premap workspace
+        premap_dir = Path("explorer_state/premap")
+        premap_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save uploaded photo
+        photo_path = premap_dir / file.filename
+        with open(photo_path, "wb") as f:
+            content = file.file.read()
+            f.write(content)
+        
+        # Initialize premapper if needed
+        if not hasattr(app.state.runtime.explorer, "premapper"):
+            app.state.runtime.explorer.premapper = Premapper(premap_dir)
+        
+        # Add photo to premapper
+        photo_id = app.state.runtime.explorer.premapper.add_photo(
+            photo_path, (position_x, position_y), heading
+        )
+        
+        return {"success": True, "photo_id": photo_id}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/explorer/premap/annotate")
+def explorer_premap_annotate(photo_id: str, x: float, y: float, label: str, 
+                            confidence: float = 1.0, notes: str = ""):
+    """Add annotation to a pre-mapping photo."""
+    if not hasattr(app.state.runtime, "explorer") or not app.state.runtime.explorer:
+        return {"error": "Explorer not initialized"}
+    
+    try:
+        if not hasattr(app.state.runtime.explorer, "premapper"):
+            return {"error": "No pre-mapping session active"}
+        
+        success = app.state.runtime.explorer.premapper.annotate_photo(
+            photo_id, x, y, label, confidence, notes
+        )
+        
+        return {"success": success}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/explorer/premap/stitch")
+def explorer_premap_stitch():
+    """Stitch uploaded photos into a composite map."""
+    if not hasattr(app.state.runtime, "explorer") or not app.state.runtime.explorer:
+        return {"error": "Explorer not initialized"}
+    
+    try:
+        if not hasattr(app.state.runtime.explorer, "premapper"):
+            return {"error": "No pre-mapping session active"}
+        
+        panorama = app.state.runtime.explorer.premapper.stitch_photos()
+        
+        if panorama.size > 0:
+            return {"success": True, "message": f"Stitched {len(app.state.runtime.explorer.premapper.photos)} photos"}
+        else:
+            return {"success": False, "error": "Stitching failed"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/explorer/premap/prior")
+def explorer_premap_create_prior():
+    """Create prior occupancy map from photo annotations."""
+    if not hasattr(app.state.runtime, "explorer") or not app.state.runtime.explorer:
+        return {"error": "Explorer not initialized"}
+    
+    try:
+        if not hasattr(app.state.runtime.explorer, "premapper"):
+            return {"error": "No pre-mapping session active"}
+        
+        prior = app.state.runtime.explorer.premapper.create_prior_occupancy()
+        
+        # Apply prior to the main occupancy map
+        if hasattr(app.state.runtime.explorer, "world_map"):
+            # Convert prior to binary occupancy using threshold
+            binary_prior = (prior > 0.7).astype(np.uint8) * 2  # 2 = OCCUPIED
+            binary_prior[prior < 0.3] = 1  # 1 = FREE
+            
+            # Blend with existing map (prior has influence but doesn't overwrite)
+            current = app.state.runtime.explorer.world_map._grid
+            # Keep UNKNOWN where prior is uncertain
+            mask = (prior >= 0.3) & (prior <= 0.7)
+            current[mask] = binary_prior[mask]
+            
+            # Update confidence based on prior strength
+            confidence_boost = np.abs(prior - 0.5) * 2  # 0 to 1
+            app.state.runtime.explorer.world_map._confidence = np.minimum(
+                255, app.state.runtime.explorer.world_map._confidence + confidence_boost * 50
+            )
+        
+        return {"success": True, "message": "Prior map created and applied"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/explorer/premap/status")
+def explorer_premap_status():
+    """Get current pre-mapping status."""
+    if not hasattr(app.state.runtime, "explorer") or not app.state.runtime.explorer:
+        return {"error": "Explorer not initialized"}
+    
+    try:
+        if not hasattr(app.state.runtime.explorer, "premapper"):
+            return {"has_premap": False, "photos": []}
+        
+        premapper = app.state.runtime.explorer.premapper
+        hints = premapper.get_exploration_hints()
+        
+        return {
+            "has_premap": True,
+            "num_photos": len(premapper.photos),
+            "has_composite": premapper.composite_map is not None,
+            "has_prior": premapper.prior_occupancy is not None,
+            "photos": [
+                {
+                    "id": p.id,
+                    "filename": p.filename,
+                    "num_annotations": len(p.annotations),
+                    "position": (p.position_x, p.position_y)
+                } for p in premapper.photos
+            ],
+            "hints": hints
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/explorer/premap/composite")
+def explorer_premap_get_composite():
+    """Get the composite stitched map as image."""
+    if not hasattr(app.state.runtime, "explorer") or not app.state.runtime.explorer:
+        return Response(content=b"", media_type="image/jpeg")
+    
+    try:
+        if not hasattr(app.state.runtime.explorer, "premapper"):
+            return Response(content=b"", media_type="image/jpeg")
+        
+        premapper = app.state.runtime.explorer.premapper
+        if premapper.composite_map is None or premapper.composite_map.size == 0:
+            return Response(content=b"", media_type="image/jpeg")
+        
+        # Convert to JPEG
+        import io
+        from PIL import Image
+        
+        pil_img = Image.fromarray(cv2.cvtColor(premapper.composite_map, cv2.COLOR_BGR2RGB))
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=85)
+        buf.seek(0)
+        
+        return StreamingResponse(buf, media_type="image/jpeg")
+    except Exception:
+        return Response(content=b"", media_type="image/jpeg")
+
+
+@app.post("/explorer/premap/save")
+def explorer_premap_save():
+    """Save pre-mapping state."""
+    if not hasattr(app.state.runtime, "explorer") or not app.state.runtime.explorer:
+        return {"error": "Explorer not initialized"}
+    
+    try:
+        if not hasattr(app.state.runtime.explorer, "premapper"):
+            return {"error": "No pre-mapping session active"}
+        
+        app.state.runtime.explorer.premapper.save_state()
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/explorer/premap/load")
+def explorer_premap_load():
+    """Load pre-mapping state."""
+    if not hasattr(app.state.runtime, "explorer") or not app.state.runtime.explorer:
+        return {"error": "Explorer not initialized"}
+    
+    try:
+        from .explorer.premapper import Premapper
+        from pathlib import Path
+        
+        premap_dir = Path("explorer_state/premap")
+        premapper = Premapper(premap_dir)
+        
+        if premapper.load_state():
+            app.state.runtime.explorer.premapper = premapper
+            return {"success": True, "num_photos": len(premapper.photos)}
+        else:
+            return {"success": False, "error": "No saved pre-mapping state found"}
+    except Exception as e:
+        return {"error": str(e)}

@@ -137,6 +137,10 @@ class ExplorerRuntime:
         self.trail.set_home(0.0, 0.0, 0.0)
         self.odometry = OdometryState(x=0.0, y=0.0, heading=0.0, speed=0.0)
         self._distance_traveled_ft = 0.0
+        
+        # Load pre-mapping hints if available
+        self._load_premap_hints()
+        
         self.planner.start_exploring()
 
         self._running = True
@@ -350,6 +354,45 @@ class ExplorerRuntime:
         distance = self.odometry.speed * dt
         self.odometry.x += distance * math.cos(self.odometry.heading)
         self.odometry.y += distance * math.sin(self.odometry.heading)
+
+    def _load_premap_hints(self) -> None:
+        """Load pre-mapping hints to guide exploration."""
+        try:
+            from .premapper import Premapper
+            from pathlib import Path
+            
+            premap_dir = Path("explorer_state/premap")
+            if not premap_dir.exists():
+                return
+            
+            premapper = Premapper(premap_dir)
+            if premapper.load_state():
+                hints = premapper.get_exploration_hints()
+                if hints:
+                    # Store hints in planner for navigation
+                    self.planner._premap_hints = hints
+                    log.info(f"Loaded {len(hints)} pre-mapping hints for exploration")
+                    
+                    # Apply prior map if available
+                    if premapper.prior_occupancy is not None:
+                        # Convert prior to binary occupancy
+                        binary_prior = (premapper.prior_occupancy > 0.7).astype(np.uint8) * 2  # 2 = OCCUPIED
+                        binary_prior[premapper.prior_occupancy < 0.3] = 1  # 1 = FREE
+                        
+                        # Blend with existing map
+                        current = self.world_map._grid
+                        mask = (premapper.prior_occupancy >= 0.3) & (premapper.prior_occupancy <= 0.7)
+                        current[mask] = binary_prior[mask]
+                        
+                        # Update confidence based on prior strength
+                        confidence_boost = np.abs(premapper.prior_occupancy - 0.5) * 2
+                        self.world_map._confidence = np.minimum(
+                            255, self.world_map._confidence + confidence_boost * 50
+                        )
+                        
+                        log.info("Applied pre-mapping prior to occupancy map")
+        except Exception as e:
+            log.warning(f"Failed to load pre-mapping hints: {e}")
 
 
 # -- Standalone entry point --------------------------------------------------
