@@ -37,8 +37,7 @@ export function GamepadHandler() {
       const gp = Array.from(navigator.getGamepads()).find(g => g?.connected) ?? null;
 
       if (gp) {
-        // Update connected flag directly from poll — avoids event timing gaps
-        if (!store.gamepadConnected) store.setGamepadConnected(true);
+        if (store.activeInputDevice !== 'gamepad') store.setActiveInputDevice('gamepad');
 
         // Steer: negate axis so left stick left → steerTarget positive (left turn)
         const rawSteer = gp.axes[0] ?? 0;
@@ -60,9 +59,9 @@ export function GamepadHandler() {
           if (store.mode === 'driving') store.setMode('paused');
           else if (store.mode === 'paused') store.setMode('driving');
         }
-      } else if (store.gamepadConnected) {
+      } else if (store.activeInputDevice === 'gamepad') {
         // Gamepad was connected but is no longer readable — clear state
-        store.setGamepadConnected(false);
+        store.setActiveInputDevice('keyboard');
         store.setInput({ steer: 0, throttle: 0, brake: false });
       }
 

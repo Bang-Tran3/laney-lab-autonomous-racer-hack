@@ -56,11 +56,11 @@ interface GameState {
   car: CarState;
   updateCar: (partial: Partial<CarState>) => void;
 
-  // Unified directional input (written by KeyboardHandler or GamepadHandler)
+  // Unified directional input (written by KeyboardHandler, GamepadHandler, or TouchHandler)
   input: { steer: number; throttle: number; brake: boolean };
   setInput: (input: { steer: number; throttle: number; brake: boolean }) => void;
-  gamepadConnected: boolean;
-  setGamepadConnected: (connected: boolean) => void;
+  activeInputDevice: 'keyboard' | 'gamepad' | 'touch';
+  setActiveInputDevice: (device: 'keyboard' | 'gamepad' | 'touch') => void;
 
   // Lap tracking
   currentLapStart: number;
@@ -143,8 +143,8 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   input: { steer: 0, throttle: 0, brake: false },
   setInput: (input) => set({ input }),
-  gamepadConnected: false,
-  setGamepadConnected: (connected) => set({ gamepadConnected: connected }),
+  activeInputDevice: 'keyboard',
+  setActiveInputDevice: (activeInputDevice) => set({ activeInputDevice }),
 
   currentLapStart: 0,
   lapCount: saved.laps,
