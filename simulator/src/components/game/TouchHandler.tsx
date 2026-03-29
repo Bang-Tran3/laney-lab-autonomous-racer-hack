@@ -74,8 +74,12 @@ export function TouchHandler() {
     }
 
     function onTouchEnd(e: TouchEvent) {
+      if (activeTouchId.current === null) return;
       const touch = Array.from(e.changedTouches).find(t => t.identifier === activeTouchId.current);
-      if (!touch) return;
+
+      // On touchcancel, some browsers omit the identifier from changedTouches.
+      // Force-reset regardless so the joystick never gets stuck.
+      if (!touch && e.type !== 'touchcancel') return;
 
       activeTouchId.current = null;
       baseRef.current = null;
