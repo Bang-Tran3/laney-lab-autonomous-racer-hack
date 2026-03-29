@@ -66,7 +66,7 @@ export function TouchHandler() {
       // Compute and write input outside the state updater to avoid setState-during-render
       const steer = clamp(-cdx / RADIUS, -1, 1);
       const throttle = cdy < 0 ? clamp(-cdy / RADIUS, 0, 1) : 0;
-      const brake = cdy > RADIUS * 0.3;
+      const brake = cdy > RADIUS * 0.3; // brake when pushed >30% down from center
       useGameStore.getState().setInput({ steer, throttle, brake });
 
       // Update knob position separately
@@ -85,7 +85,8 @@ export function TouchHandler() {
       baseRef.current = null;
       const store = useGameStore.getState();
       // Only reclaim keyboard if touch still owns input — gamepad may have taken over mid-touch
-      if (store.activeInputDevice === 'touch') store.setActiveInputDevice('keyboard');
+      const next = navigator.getGamepads().some(g => g?.connected) ? 'gamepad' : 'keyboard';
+      store.setActiveInputDevice(next);
       store.setInput({ steer: 0, throttle: 0, brake: false });
       setJoystick(null);
     }
