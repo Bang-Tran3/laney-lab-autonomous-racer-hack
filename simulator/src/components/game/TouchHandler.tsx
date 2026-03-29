@@ -29,8 +29,10 @@ export function TouchHandler() {
 
   useEffect(() => {
     function onTouchStart(e: TouchEvent) {
-      // Ignore if gamepad already owns input, or if a touch is already tracked
-      if (useGameStore.getState().activeInputDevice === 'gamepad') return;
+      // Only active during manual driving
+      const store = useGameStore.getState();
+      if (store.mode !== 'driving' && store.mode !== 'paused') return;
+      if (store.activeInputDevice === 'gamepad') return;
       if (activeTouchId.current !== null) return;
 
       // Don't hijack taps on UI buttons / overlays
@@ -76,8 +78,11 @@ export function TouchHandler() {
       if (!touch) return;
 
       activeTouchId.current = null;
-      useGameStore.getState().setActiveInputDevice('keyboard');
-      useGameStore.getState().setInput({ steer: 0, throttle: 0, brake: false });
+      baseRef.current = null;
+      const store = useGameStore.getState();
+      // Only reclaim keyboard if touch still owns input — gamepad may have taken over mid-touch
+      if (store.activeInputDevice === 'touch') store.setActiveInputDevice('keyboard');
+      store.setInput({ steer: 0, throttle: 0, brake: false });
       setJoystick(null);
     }
 
